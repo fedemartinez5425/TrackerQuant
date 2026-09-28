@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+config/credentials.yaml
+config/service_account.json
+data/*.csv
+!data/.gitkeep
+.streamlit/secrets.toml
+# Credenciales de Google: NUNCA subir
+tracker-riesgo-*.json
+*service_account*.json
