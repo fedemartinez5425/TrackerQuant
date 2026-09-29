@@ -19,15 +19,19 @@ from core.storage.csv_repository import CsvRepository
 logger = logging.getLogger(__name__)
 
 _repository: BaseRepository | None = None
+_backend_solicitado: str = "csv"
+_backend_error: str | None = None  # por qué cayó a CSV (si cayó)
 
 
 def get_repository() -> BaseRepository:
-    global _repository
+    global _repository, _backend_solicitado, _backend_error
     if _repository is not None:
         return _repository
 
+    _backend_error = None
     # El backend se lee de st.secrets primero (Streamlit Cloud), luego de .env
     backend = str(get_secret(["storage_backend"], settings.STORAGE_BACKEND)).strip().lower()
+    _backend_solicitado = backend
     if backend == "gsheets":
         try:
             spreadsheet_id = get_secret(["google_sheets_spreadsheet_id"], settings.GOOGLE_SHEETS_SPREADSHEET_ID)
@@ -56,6 +60,7 @@ def get_repository() -> BaseRepository:
             logger.info("Storage backend: Google Sheets")
             return _repository
         except Exception as exc:  # noqa: BLE001
+            _backend_error = f"{type(exc).__name__}: {exc}"
             logger.warning(
                 "No se pudo inicializar Google Sheets (%s). Usando CSV local como fallback.", exc
             )
@@ -70,6 +75,21 @@ def get_repository() -> BaseRepository:
     )
     logger.info("Storage backend: CSV local (%s)", settings.DATA_DIR)
     return _repository
+
+
+def get_backend_status() -> dict:
+    """Estado REAL del storage: qué backend se pidió, cuál quedó activo y,
+    si cayó a CSV, el motivo exacto. Sirve para que un fallo de conexión a
+    Google Sheets no pase desapercibido en producción."""
+    repo = get_repository()
+    activo = "gsheets" if repo.__class__.__name__ == "SheetsRepository" else "csv"
+    intencion_gsheets = _backend_solicitado == "gsheets" or get_secret(["gcp_service_account"]) is not None
+    return {
+        "solicitado": _backend_solicitado,
+        "activo": activo,
+        "error": _backend_error,
+        "inconsistente": intencion_gsheets and activo != "gsheets",
+    }
 
 
 def reset_repository_cache() -> None:
