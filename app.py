@@ -14,6 +14,7 @@ import app_style
 from config.logging_config import setup_logging
 from config.settings import settings
 from core.auth.auth_service import render_login, render_logout_button
+from core.storage import get_backend_status, reset_repository_cache
 
 setup_logging()
 
@@ -68,6 +69,25 @@ pg = st.navigation(paginas, position="sidebar")
 with st.sidebar:
     st.divider()
     app_style.sidebar_footer(st)
-    st.caption(f"Storage: `{settings.STORAGE_BACKEND}` · Benchmark: `{settings.DEFAULT_BENCHMARK}`")
+    estado_storage = get_backend_status()
+    st.caption(f"Storage: `{estado_storage['activo']}` · Benchmark: `{settings.DEFAULT_BENCHMARK}`")
+
+# ---------------- Alerta si Google Sheets no conectó (fallback silencioso a CSV) ----------------
+if estado_storage["inconsistente"]:
+    st.error(
+        "🚨 **Los datos NO se están guardando en Google Sheets.** La app está usando CSV local, "
+        "que en Streamlit Cloud se borra al reiniciar."
+    )
+    if estado_storage["error"]:
+        st.code(estado_storage["error"], language="text")
+    else:
+        st.write(
+            f"No hubo error de conexión: el backend pedido fue `{estado_storage['solicitado']}`. "
+            "Revisá que `storage_backend = \"gsheets\"` esté como PRIMERA línea de los Secrets, "
+            "fuera de cualquier [tabla]."
+        )
+    if st.button("🔄 Reintentar conexión a Google Sheets"):
+        reset_repository_cache()
+        st.rerun()
 
 pg.run()
