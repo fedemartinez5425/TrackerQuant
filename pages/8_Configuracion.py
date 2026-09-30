@@ -8,6 +8,7 @@ from core.data_providers.comafi_ratios import actualizar_cache, leer_cache
 from core.storage import get_repository
 
 username = require_login()
+repo = get_repository()
 
 st.title("⚙️ Configuración")
 
@@ -192,7 +193,6 @@ else:
 st.divider()
 st.subheader("Snapshots históricos guardados")
 st.caption("Se guardan desde el botón '📸 Guardar snapshot de hoy' en el Dashboard.")
-repo = get_repository()
 snapshots = repo.list_snapshots()
 if not snapshots:
     st.info("Todavía no guardaste ningún snapshot.")
