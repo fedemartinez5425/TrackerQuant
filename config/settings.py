@@ -27,7 +27,9 @@ class Settings:
     INSTRUMENTOS_FILE: Path = DATA_DIR / "instrumentos.csv"
     PROCESSED_FILES_FILE: Path = DATA_DIR / "processed_files.csv"
     FORECASTS_FILE: Path = DATA_DIR / "forecast_log.csv"
-    CEDEAR_RATIOS_FILE: Path = DATA_DIR / "cedear_ratios.csv"  # legado, ya no se usa con gsheets
+    # Cache del listado de ratios de Comafi. Si no existe (ej. en Streamlit
+    # Cloud tras un reinicio), se vuelve a bajar solo la primera vez que se necesita.
+    CEDEAR_RATIOS_FILE: Path = DATA_DIR / "cedear_ratios.csv"
 
     # --- Storage backend: "csv" (default, funciona sin configurar nada) o "gsheets" ---
     # El objetivo del proyecto es correr en "gsheets" para tener el log de
@@ -67,7 +69,9 @@ class Settings:
     # --- Auth ---
     AUTH_CREDENTIALS_FILE: Path = BASE_DIR / "config" / "credentials.yaml"
     SESSION_TIMEOUT_MINUTES: int = int(os.getenv("SESSION_TIMEOUT_MINUTES", "480"))
-    COOKIE_KEY: str = os.getenv("COOKIE_KEY", "tracker_riesgo_cookie_key_cambiar")
+    # Sin default fijo: si no se configura, core/auth genera una clave aleatoria
+    # (una clave por defecto publicada en el repo permitiría falsificar cookies).
+    COOKIE_KEY: str = os.getenv("COOKIE_KEY", "")
 
     DEBUG: bool = _get_bool("DEBUG", False)
 

@@ -73,6 +73,27 @@ def parsear_numero_ar(texto: str) -> float | None:
     return -valor if negativo else valor
 
 
+_MONEDAS_USD = {"USD", "US$", "U$S", "U$D", "DOLAR", "DOLARES", "DOLAR MEP", "DOLAR CABLE", "MEP", "CCL", "DOLARES MEP"}
+_MONEDAS_ARS = {"ARS", "$", "PESOS", "PESO", "AR$"}
+
+
+def normalizar_moneda(texto: str | None) -> str:
+    """Los brokers escriben la moneda de formas distintas ("Pesos", "$",
+    "Dólares", "US$"...). Antes todo lo que no era literalmente "ARS"/"USD"
+    caía a ARS en silencio -- y una operación en dólares quedaba valuada
+    como si fueran pesos."""
+    import unicodedata
+
+    if not texto or not texto.strip():
+        return "ARS"
+    limpio = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii").upper().strip()
+    if limpio in _MONEDAS_USD or limpio.startswith("DOLAR") or limpio.startswith("USD"):
+        return "USD"
+    if limpio in _MONEDAS_ARS or limpio.startswith("PESO"):
+        return "ARS"
+    return "ARS"
+
+
 def parsear_fecha_ar(texto: str) -> date | None:
     """Convierte 'dd-mm-yyyy' a date."""
     try:
@@ -161,7 +182,7 @@ def parsear_movimientos_csv(
                 cantidad=abs(cantidad),
                 precio=abs(precio),
                 comision=abs(comision) + abs(iva) + abs(otros),
-                moneda=(fila.get("moneda") or "ARS").strip() or "ARS",
+                moneda=normalizar_moneda(fila.get("moneda")),
             )
         )
 

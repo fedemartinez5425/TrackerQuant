@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from app_helpers import (
+    avisar_excluidos,
     formato_moneda,
     formato_pct,
     obtener_historicos_riesgo,
@@ -13,8 +14,7 @@ from app_helpers import (
     require_login,
 )
 from config.settings import settings
-from core import data_providers
-from core.portfolio.historicos import desde_posiciones, historicos_usd_equivalente
+from core.portfolio.historicos import alinear_dias_comunes
 from core.portfolio.portfolio_engine import (
     cartera_a_dataframe,
     construir_cartera,
@@ -70,23 +70,20 @@ with tab_historico:
             )
 
             pesos_h = {p.ticker: p.peso for p in posiciones_historicas if p.peso}
-            instrumentos_h = desde_posiciones(posiciones_historicas)
-            historicos_completos = historicos_usd_equivalente(instrumentos_h, period="5y")
+            # Históricos de 5 años (posiciones + benchmark, cacheados), recortados
+            # a la fecha de corte y recién ahí alineados por días comunes.
+            historicos_completos = obtener_historicos_riesgo(posiciones_historicas, period="5y")
 
             if historicos_completos.empty:
                 st.warning("No se pudo obtener histórico de precios para reconstruir el riesgo.")
             else:
-                historicos_hasta_fecha = historicos_completos.loc[: pd.Timestamp(fecha_corte)]
+                historicos_hasta_fecha = alinear_dias_comunes(
+                    historicos_completos.loc[: pd.Timestamp(fecha_corte)], min_dias=20
+                )
                 if len(historicos_hasta_fecha) < 20:
                     st.warning(f"Muy pocos datos hasta el {fecha_corte} para un cálculo confiable (se necesitan ~20 días).")
                 else:
-                    benchmark_hist = data_providers.get_history(settings.DEFAULT_BENCHMARK, period="5y")
-                    if benchmark_hist is not None and not benchmark_hist.empty:
-                        benchmark_hasta_fecha = benchmark_hist.loc[: pd.Timestamp(fecha_corte)]
-                        historicos_hasta_fecha = pd.concat(
-                            [historicos_hasta_fecha, benchmark_hasta_fecha], axis=1
-                        ).ffill().dropna(how="all")
-
+                    avisar_excluidos(historicos_hasta_fecha)
                     riesgo_h = calcular_resumen_riesgo(
                         historicos_hasta_fecha, pesos_h, resumen_h["valor_actual_total"],
                         settings.DEFAULT_BENCHMARK, settings.STRESS_SCENARIOS,
@@ -97,7 +94,7 @@ with tab_historico:
                     d1.metric("Semáforo", riesgo_h["semaforo"])
                     d2.metric("Volatilidad Anual.", formato_pct(riesgo_h["volatilidad_anualizada"]))
                     d3.metric("VaR histórico 95%", formato_pct(riesgo_h["var_95_pct"]))
-                    d4.metric(f"Beta vs. {settings.DEFAULT_BENCHMARK}", f"{riesgo_h['beta_cartera']:.2f}" if riesgo_h["beta_cartera"] else "—")
+                    d4.metric(f"Beta vs. {settings.DEFAULT_BENCHMARK}", f"{riesgo_h['beta_cartera']:.2f}" if riesgo_h["beta_cartera"] is not None else "—")
                     st.caption(f"Calculado con datos hasta el {fecha_corte} — sin ver nada posterior a esa fecha.")
 
 # ==================== TAB 2: SIMULADOR ====================
@@ -230,12 +227,12 @@ with tab_simulador:
                     "Métrica": ["Volatilidad Anualizada", "VaR histórico 95%", f"Beta vs. {settings.DEFAULT_BENCHMARK}", "Correlación promedio"],
                     "Actual": [
                         formato_pct(riesgo_actual["volatilidad_anualizada"]), formato_pct(riesgo_actual["var_95_pct"]),
-                        f"{riesgo_actual['beta_cartera']:.2f}" if riesgo_actual["beta_cartera"] else "—",
+                        f"{riesgo_actual['beta_cartera']:.2f}" if riesgo_actual["beta_cartera"] is not None else "—",
                         f"{riesgo_actual['correlacion_ponderada']:.2f}" if riesgo_actual["correlacion_ponderada"] is not None else "—",
                     ],
                     "Escenario": [
                         formato_pct(riesgo_simulado["volatilidad_anualizada"]), formato_pct(riesgo_simulado["var_95_pct"]),
-                        f"{riesgo_simulado['beta_cartera']:.2f}" if riesgo_simulado["beta_cartera"] else "—",
+                        f"{riesgo_simulado['beta_cartera']:.2f}" if riesgo_simulado["beta_cartera"] is not None else "—",
                         f"{riesgo_simulado['correlacion_ponderada']:.2f}" if riesgo_simulado["correlacion_ponderada"] is not None else "—",
                     ],
                 }

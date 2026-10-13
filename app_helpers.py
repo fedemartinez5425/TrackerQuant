@@ -10,7 +10,7 @@ import streamlit as st
 import app_style
 from config.settings import settings
 from core import data_providers
-from core.portfolio.historicos import desde_posiciones, historicos_usd_equivalente
+from core.portfolio.historicos import alinear_dias_comunes, desde_posiciones, historicos_usd_equivalente
 from core.portfolio.portfolio_engine import construir_cartera
 from core.storage import get_repository
 from core.storage.models import Instrumento, Transaction
@@ -20,13 +20,24 @@ def require_login() -> str:
     """Verifica que haya sesión activa. El header de marca, el usuario y el
     botón de logout ya se renderizan una sola vez en app.py (arriba del
     menú de navegación) -- esta función solo confirma la sesión y aplica
-    el CSS global, por si alguna página se abre de forma directa."""
+    el CSS global, por si alguna página se abre de forma directa.
+
+    Devuelve el USERNAME (identificador único, ej. "fede"), que es lo que
+    se guarda en el registro de auditoría -- no el nombre para mostrar,
+    que puede repetirse o cambiar."""
     app_style.inject(st)
     if not st.session_state.get("authentication_status"):
         st.warning("Necesitás iniciar sesión para ver esta página.")
         st.page_link("app.py", label="⬅️ Ir al login", icon="🔑")
         st.stop()
-    return st.session_state.get("name") or st.session_state.get("username", "usuario")
+    return st.session_state.get("username") or st.session_state.get("name") or "usuario"
+
+
+def invalidar_caches() -> None:
+    """Llamar después de cualquier escritura (alta, reverso, importación)
+    para que todas las páginas vean el dato nuevo."""
+    st.cache_data.clear()
+    data_providers.limpiar_cache()
 
 
 @st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, show_spinner=False)
@@ -66,20 +77,38 @@ def obtener_historicos(tickers: list[str], period: str | None = None) -> pd.Data
     return _cached_history(tuple(sorted(set(tickers))), period)
 
 
+@st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, show_spinner="Trayendo históricos de precios...")
+def _cached_historicos_usd(instrumentos: tuple, period: str) -> pd.DataFrame:
+    return historicos_usd_equivalente(list(instrumentos), period=period)
+
+
 def obtener_historicos_riesgo(posiciones, period: str | None = None) -> pd.DataFrame:
     """Históricos en USD equivalente para TODAS las posiciones (mezclando
     CEDEAR y acciones argentinas directas correctamente vía CCL histórico),
-    más el benchmark, todo alineado en el mismo DataFrame."""
+    más el benchmark, alineados SOLO en los días en que cotizaron todos
+    (ver core/portfolio/historicos.alinear_dias_comunes). Cacheado: antes se
+    volvía a bajar todo en cada clic."""
     period = period or settings.HISTORY_PERIOD
-    instrumentos = desde_posiciones(posiciones)
-    historicos_posiciones = historicos_usd_equivalente(instrumentos, period=period)
+    instrumentos = tuple(sorted(desde_posiciones(posiciones)))
+    historicos_posiciones = _cached_historicos_usd(instrumentos, period)
     historico_benchmark = obtener_historicos([settings.DEFAULT_BENCHMARK], period=period)
     if historicos_posiciones.empty:
-        return historico_benchmark
+        return alinear_dias_comunes(historico_benchmark)
     if historico_benchmark.empty:
-        return historicos_posiciones
+        return alinear_dias_comunes(historicos_posiciones)
     combinado = pd.concat([historicos_posiciones, historico_benchmark], axis=1)
-    return combinado.ffill().dropna(how="all")
+    return alinear_dias_comunes(combinado)
+
+
+def avisar_excluidos(historicos: pd.DataFrame) -> None:
+    """Si algún activo quedó fuera del cálculo de riesgo por tener muy poca
+    historia, lo dice en pantalla (en vez de que el número cambie en silencio)."""
+    excluidos = historicos.attrs.get("excluidos") if historicos is not None else None
+    if excluidos:
+        st.caption(
+            f"⚠️ Sin historia suficiente para el cálculo de riesgo (excluidos, su peso se reparte "
+            f"entre el resto): {', '.join(excluidos)}."
+        )
 
 
 def formato_moneda(valor: float | None, moneda: str = "ARS") -> str:

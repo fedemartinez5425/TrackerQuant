@@ -167,7 +167,18 @@ def leer_cache(cache_file: Path) -> pd.DataFrame:
     return _leer_cache(cache_file)
 
 
-def obtener_ratio(ticker: str, cache_file: Path) -> float | None:
+_descarga_automatica_intentada = False
+
+
+def obtener_ratio(ticker: str, cache_file: Path, descargar_si_falta: bool = True) -> float | None:
+    """Ratio del CEDEAR según el cache de Comafi. Si el cache no existe (ej.
+    en Streamlit Cloud, donde el disco se borra en cada reinicio), lo baja
+    automáticamente UNA vez por proceso, en vez de dejar todos los CEDEARs
+    nuevos sin ratio."""
+    global _descarga_automatica_intentada
+    if descargar_si_falta and not cache_file.exists() and not _descarga_automatica_intentada:
+        _descarga_automatica_intentada = True
+        actualizar_cache(cache_file)
     df = _leer_cache(cache_file)
     if df.empty:
         return None

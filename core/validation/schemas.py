@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from core.storage.models import Transaction, TransactionAction
+from core.storage.models import Transaction, TransactionAction, transacciones_efectivas
 
 
 @dataclass
@@ -44,7 +44,7 @@ def validar_venta_no_supera_tenencia(
         return result
 
     tenencia = 0.0
-    for t in transacciones_existentes:
+    for t in transacciones_efectivas(transacciones_existentes):
         if t.ticker != transaccion.ticker:
             continue
         if t.accion == TransactionAction.COMPRA:
@@ -65,7 +65,7 @@ def validar_no_duplicada(
 ) -> ValidationResult:
     """Chequeo simple anti-duplicado: mismo ticker, fecha, acción, cantidad y precio."""
     result = ValidationResult(ok=True)
-    for t in transacciones_existentes:
+    for t in transacciones_efectivas(transacciones_existentes):
         if (
             t.ticker == transaccion.ticker
             and t.fecha == transaccion.fecha

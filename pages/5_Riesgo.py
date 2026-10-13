@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from app_helpers import formato_moneda, obtener_cartera_actual, obtener_historicos_riesgo, require_login
+from app_helpers import avisar_excluidos, obtener_cartera_actual, obtener_historicos_riesgo, require_login
 from config.settings import settings
 from core.portfolio.portfolio_engine import resumen_cartera
 from core.risk.correlation import (
@@ -33,6 +33,7 @@ if historicos.empty:
     st.warning("No se pudo obtener histórico de precios para calcular riesgo en este momento.")
     st.stop()
 
+avisar_excluidos(historicos)
 retornos = historicos.pct_change().dropna(how="all")
 retorno_cartera = retorno_diario_cartera(retornos, pesos)
 
@@ -45,7 +46,7 @@ with tab_var:
     peor_pct, peor_fecha = peor_dia_historico(retorno_cartera)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Volatilidad Anualizada", f"{vol_anual:.1%}" if vol_anual else "—")
+    c1.metric("Volatilidad Anualizada", f"{vol_anual:.1%}" if vol_anual is not None else "—")
     c2.metric("Retorno diario promedio", f"{retorno_cartera.mean():.3%}" if not retorno_cartera.empty else "—")
     c3.metric(
         "Peor día histórico", f"{peor_pct:.2%}" if peor_pct is not None else "—",
@@ -130,7 +131,7 @@ with tab_estres:
                     width="stretch",
                 )
         with col2:
-            st.metric(f"Beta ponderado vs. {settings.DEFAULT_BENCHMARK}", f"{beta_cartera:.2f}" if beta_cartera else "—")
+            st.metric(f"Beta ponderado vs. {settings.DEFAULT_BENCHMARK}", f"{beta_cartera:.2f}" if beta_cartera is not None else "—")
 
         st.divider()
         st.markdown("##### Escenarios de shock")

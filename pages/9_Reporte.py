@@ -1,6 +1,6 @@
 import streamlit as st
 
-from app_helpers import obtener_cartera_actual, obtener_historicos_riesgo, require_login
+from app_helpers import avisar_excluidos, obtener_cartera_actual, obtener_historicos_riesgo, require_login
 from config.settings import settings
 from core.insights.rules_engine import ICONO_SEVERIDAD, generar_insights, generar_reporte_markdown
 from core.portfolio.portfolio_engine import resumen_cartera
@@ -31,6 +31,7 @@ riesgo = calcular_resumen_riesgo(
     historicos, pesos, resumen["valor_actual_total"], settings.DEFAULT_BENCHMARK, settings.STRESS_SCENARIOS
 )
 insights = generar_insights(riesgo, posiciones, settings.DEFAULT_BENCHMARK)
+avisar_excluidos(historicos)
 
 # ==================== Resumen visual (antes del markdown) ====================
 col1, col2, col3 = st.columns(3)

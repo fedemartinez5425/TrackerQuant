@@ -11,19 +11,22 @@ como una base de datos relacional. Diseño tipo dashboard de BI profesional
 ## Instalación local
 
 ```bash
-cd tracker_riesgo
+cd TrackerQuant
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Abre en `http://localhost:8501`. Login por defecto: usuario `admin`,
-contraseña `cambiar123` (se genera solo la primera vez). Cambiala con:
+Abre en `http://localhost:8501`. Login por defecto **solo en local**: usuario
+`admin`, contraseña `cambiar123` (se genera sola la primera vez). Cambiala con:
 
 ```bash
 python scripts/generar_credenciales.py
 ```
+
+En un deploy (Streamlit Cloud) el usuario por defecto **no existe**: si faltan
+las credenciales en los Secrets, la app se niega a arrancar.
 
 ## Módulos (10 páginas, navegación centralizada en `app.py`)
 
@@ -46,7 +49,10 @@ python scripts/generar_credenciales.py
   ratio). Si un ratio cambia (split, ampliación de capital), se corrige
   en un solo lugar y aplica a toda la cartera retroactivamente.
 - **`transactions`** (hechos, append-only): solo referencia el ticker —
-  no repite tipo/ratio en cada fila.
+  no repite tipo/ratio en cada fila. Nunca se edita ni se borra: un
+  **reverso** anula la transacción original (ambas quedan en el historial,
+  marcadas, y ninguna cuenta para la cartera). Las operaciones en USD se
+  convierten a pesos con el CCL de su fecha.
 - **`portfolio_snapshots`** (hechos): fotos manuales de valor+riesgo, para
   graficar evolución real con el tiempo.
 - **`forecast_log`** (hechos): cada forecast de volatilidad emitido, para
@@ -63,6 +69,12 @@ argentinos ($)**. Los cálculos de **riesgo** se hacen sobre una serie de
 precios convertida a **USD equivalente** internamente (necesario para que
 CEDEARs y acciones argentinas directas sean comparables matemáticamente),
 pero el resultado en pesos que ves en la app siempre está en $ ARS.
+
+**Calendarios:** BCBA y NYSE tienen feriados distintos. Los cálculos de riesgo
+usan solo los días en que cotizaron todos los activos (no se inventa un
+precio para el mercado cerrado, que generaba retornos de 0% falsos y
+subestimaba volatilidad, correlación y beta). Si un activo tiene muy poca
+historia, se excluye del cálculo y la app lo avisa.
 
 ## Deploy: GitHub + Streamlit Community Cloud + Google Cloud (gratis)
 
@@ -135,16 +147,20 @@ app detecta los archivos nuevos, los tipifica mirando las columnas del CSV
 CCL = (precio_CEDEAR_ARS × ratio) / precio_ADR_USD
 ```
 
-Por defecto: `GGAL.BA/GGAL` (10:1), `YPFD.BA/YPF` (1:1), `PAMP.BA/PAM`
-(25:1). También se calcula una **serie histórica de CCL** para convertir
-acciones argentinas directas a USD equivalente en toda la ventana de
-riesgo, no solo con el valor de hoy.
+Pares: `GGAL.BA/GGAL` (10:1), `YPFD.BA/YPF` (1:1), `PAMP.BA/PAM` (25:1).
+Se usa la **mediana** de los pares con datos (un precio desactualizado o un
+ratio mal cargado en un par no distorsiona el resultado; si difieren más de
+5% se avisa en el log). También se calcula una **serie histórica de CCL**
+para convertir acciones argentinas directas a USD equivalente en toda la
+ventana de riesgo, no solo con el valor de hoy.
 
 ## Forecasting de volatilidad (GARCH)
 
-Se usa GARCH(1,1) (librería `arch`, estándar de la industria) porque
-modela el "clustering" de volatilidad — algo que un promedio móvil no
-captura. Ajustar el modelo tarda milisegundos incluso con años de
+Se usa GARCH(1,1) con distribución t de Student (librería `arch`, estándar
+de la industria) porque modela el "clustering" de volatilidad — algo que un
+promedio móvil no captura — y la t contempla colas más gordas que una normal.
+El forecast que se guarda es la volatilidad **promedio del horizonte**, que
+es lo que después se compara contra la volatilidad realizada en esa ventana. Ajustar el modelo tarda milisegundos incluso con años de
 historia diaria, así que no hace falta ninguna capa extra de caché: el
 cuello de botella real es traer el histórico de precios, que ya está
 cacheado. Lo único que se persiste en la base de datos es el **forecast
@@ -175,10 +191,18 @@ Mono, definida en `app_style.py` (CSS) y `core/viz/palette.py` (colores
 también usados por los gráficos de Plotly). Los gráficos se arman con
 funciones reutilizables en `core/viz/charts.py`.
 
+## Rendimiento y cuota de Google
+
+Los históricos de precios se cachean en memoria (`PRICE_CACHE_TTL_SECONDS`,
+15 min por defecto) y las lecturas de Google Sheets 60 segundos; cualquier
+escritura de la app invalida su cache al instante. Si editás la planilla a
+mano, ⚙️ Configuración → "Releer datos". Las importaciones escriben todas las
+filas en una sola llamada a la API.
+
 ## Estructura del proyecto
 
 ```
-tracker_riesgo/
+TrackerQuant/
 ├── app.py                    # entry point — st.navigation(), header de marca, auth gate
 ├── app_helpers.py            # helpers de UI compartidos
 ├── app_style.py              # CSS global
@@ -217,6 +241,9 @@ tracker_riesgo/
 pytest tests/
 ```
 
-59+ tests cubren el motor de cartera, riesgo, importación de broker,
-reglas de insights y forecasting — sin necesidad de red ni de Streamlit
-corriendo (todo mockeado con datos sintéticos).
+79 tests cubren el motor de cartera, reversos, conversión de moneda,
+alineación de calendarios, riesgo, importación de broker, el repositorio de
+Google Sheets (contra una planilla falsa en memoria), reglas de insights y
+forecasting — sin necesidad de red ni de Streamlit corriendo (todo mockeado
+con datos sintéticos). GitHub Actions los corre en cada push
+(`.github/workflows/tests.yml`).

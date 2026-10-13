@@ -11,12 +11,20 @@ Diseño relacional:
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def _opt_float(valor) -> Optional[float]:
+    """'' / None -> None; cualquier otro valor -> float. Para leer filas de CSV/Sheets."""
+    if valor is None or str(valor).strip() == "":
+        return None
+    return float(valor)
 
 
 class Currency(str, Enum):
@@ -76,6 +84,17 @@ class Instrumento(BaseModel):
         d["actualizado_en"] = self.actualizado_en.isoformat()
         return d
 
+    @classmethod
+    def from_row(cls, d: dict) -> "Instrumento":
+        return cls(
+            ticker=d["ticker"],
+            tipo_instrumento=TipoInstrumento(d.get("tipo_instrumento") or "ACCION_ARG"),
+            ticker_usd=d.get("ticker_usd") or None,
+            ratio_cedear=_opt_float(d.get("ratio_cedear")),
+            nombre=d.get("nombre") or "",
+            actualizado_en=datetime.fromisoformat(d["actualizado_en"]),
+        )
+
 
 class Transaction(BaseModel):
     """Un movimiento de cartera (tabla de hechos, append-only): nunca se
@@ -128,6 +147,49 @@ class Transaction(BaseModel):
         d["moneda"] = self.moneda.value
         return d
 
+    @classmethod
+    def from_row(cls, d: dict) -> "Transaction":
+        return cls.model_construct(  # sin re-validar: ya se validó al guardar
+            id=d["id"],
+            id_externo=d.get("id_externo") or None,
+            fecha=date.fromisoformat(d["fecha"]),
+            ticker=d["ticker"].upper().strip(),
+            accion=TransactionAction(d["accion"]),
+            cantidad=float(d["cantidad"]),
+            precio=float(d["precio"]),
+            moneda=Currency(d.get("moneda") or "ARS"),
+            comision=float(d.get("comision") or 0.0),
+            notas=d.get("notas") or "",
+            creado_en=datetime.fromisoformat(d["creado_en"]),
+        )
+
+    @property
+    def revierte_a(self) -> Optional[str]:
+        """Si esta transacción es un reverso, el id de la transacción que anula."""
+        match = _PATRON_REVERSO.match(self.notas or "")
+        return match.group(1) if match else None
+
+
+REVERSO_PREFIJO = "REVERSO de "
+_PATRON_REVERSO = re.compile(r"^REVERSO de (\S+)")
+
+
+def ids_reversados(transacciones: list["Transaction"]) -> set[str]:
+    """Ids de transacciones anuladas por un reverso."""
+    return {t.revierte_a for t in transacciones if t.revierte_a}
+
+
+def transacciones_efectivas(transacciones: list["Transaction"]) -> list["Transaction"]:
+    """Log de transacciones SIN las anuladas y SIN sus reversos.
+
+    Un reverso anula la transacción original por completo: ambas quedan en
+    el historial (append-only, auditable) pero ninguna afecta cantidades ni
+    costo promedio. Antes el reverso se cargaba como el movimiento inverso
+    con fecha de HOY, lo que distorsionaba el costo promedio y la
+    reconstrucción de la cartera en fechas pasadas."""
+    anuladas = ids_reversados(transacciones)
+    return [t for t in transacciones if t.id not in anuladas and not t.revierte_a]
+
 
 class PortfolioSnapshot(BaseModel):
     """Foto del estado de la cartera en un momento dado (valor total + métricas
@@ -152,6 +214,21 @@ class PortfolioSnapshot(BaseModel):
         d["creado_en"] = self.creado_en.isoformat()
         return d
 
+    @classmethod
+    def from_row(cls, d: dict) -> "PortfolioSnapshot":
+        return cls(
+            id=d["id"],
+            fecha=date.fromisoformat(d["fecha"]),
+            valor_total_usd=float(d["valor_total_usd"]),
+            cantidad_posiciones=int(d["cantidad_posiciones"]),
+            volatilidad_anualizada=_opt_float(d.get("volatilidad_anualizada")),
+            var_95_pct=_opt_float(d.get("var_95_pct")),
+            beta_vs_benchmark=_opt_float(d.get("beta_vs_benchmark")),
+            correlacion_promedio=_opt_float(d.get("correlacion_promedio")),
+            composicion_json=d.get("composicion_json") or "",
+            creado_en=datetime.fromisoformat(d["creado_en"]),
+        )
+
 
 class PortfolioForecast(BaseModel):
     """Log append-only de cada forecast de volatilidad emitido. La
@@ -173,6 +250,18 @@ class PortfolioForecast(BaseModel):
         d["creado_en"] = self.creado_en.isoformat()
         return d
 
+    @classmethod
+    def from_row(cls, d: dict) -> "PortfolioForecast":
+        return cls(
+            id=d["id"],
+            fecha=date.fromisoformat(d["fecha"]),
+            horizonte_dias=int(d["horizonte_dias"]),
+            vol_pronosticada_anual=float(d["vol_pronosticada_anual"]),
+            metodo=d.get("metodo") or "GARCH(1,1)",
+            composicion_json=d.get("composicion_json") or "",
+            creado_en=datetime.fromisoformat(d["creado_en"]),
+        )
+
 
 class AuditEvent(BaseModel):
     """Registro de auditoría: qué se hizo, cuándo, quién."""
@@ -187,6 +276,16 @@ class AuditEvent(BaseModel):
         d = self.model_dump()
         d["timestamp"] = self.timestamp.isoformat()
         return d
+
+    @classmethod
+    def from_row(cls, d: dict) -> "AuditEvent":
+        return cls(
+            id=d["id"],
+            timestamp=datetime.fromisoformat(d["timestamp"]),
+            usuario=d["usuario"],
+            accion=d["accion"],
+            detalle=d.get("detalle") or "",
+        )
 
 
 class ProcessedFile(BaseModel):

@@ -15,7 +15,7 @@ from datetime import date, timedelta
 import pandas as pd
 
 from core.forecasting.volatility_garch import calcular_vol_realizada_ventana
-from core.portfolio.historicos import InstrumentoRiesgo, historicos_usd_equivalente
+from core.portfolio.historicos import InstrumentoRiesgo, alinear_dias_comunes, historicos_usd_equivalente
 from core.risk.volatility import retorno_diario_cartera
 from core.storage.models import PortfolioForecast
 
@@ -50,7 +50,8 @@ def evaluar_forecast(
     if not instrumentos:
         return None
 
-    historicos = historicos_usd_equivalente(instrumentos, period="2y")
+    periodo = "2y" if (date.today() - forecast.fecha).days < 600 else "5y"
+    historicos = alinear_dias_comunes(historicos_usd_equivalente(instrumentos, period=periodo), min_dias=1)
     if historicos.empty:
         return None
 

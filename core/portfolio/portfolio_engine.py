@@ -13,16 +13,37 @@ así siguen siendo puras y testeables sin tocar storage.
 - CEDEAR: instrumento extranjero comprado como CEDEAR (ej: AMZN). Precio
   final = precio BCBA si está disponible, si no el Precio Teórico
   (ADR en USD / ratio × CCL automático) como fallback.
+
+Moneda: la cartera se valúa en pesos. Las transacciones cargadas en USD se
+convierten a pesos con el CCL de SU fecha (no el de hoy) antes de sumar al
+costo -- antes se sumaban dólares y pesos como si fueran lo mismo.
+
+Reversos: las transacciones anuladas y sus reversos se excluyen por
+completo (ver core/storage/models.transacciones_efectivas).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from datetime import date
+from typing import Callable
 
 import pandas as pd
 
 from core import data_providers
-from core.data_providers.ccl_provider import get_ccl_automatico
-from core.storage.models import Instrumento, TipoInstrumento, Transaction, TransactionAction
+from core.data_providers.ccl_provider import ccl_en_fecha, get_ccl_automatico, get_ccl_historico
+from core.storage.models import (
+    Currency,
+    Instrumento,
+    TipoInstrumento,
+    Transaction,
+    TransactionAction,
+    transacciones_efectivas,
+)
+
+logger = logging.getLogger(__name__)
+
+TipoCambio = Callable[[date], "float | None"]  # fecha -> pesos por dólar
 
 
 @dataclass
@@ -51,18 +72,50 @@ def _instrumento_o_default(ticker: str, instrumentos_por_ticker: dict[str, Instr
     return instrumentos_por_ticker.get(ticker) or Instrumento(ticker=ticker, tipo_instrumento=TipoInstrumento.ACCION_ARG)
 
 
+def tipo_cambio_ccl_historico() -> TipoCambio:
+    """Función fecha -> CCL de esa fecha (serie histórica), con el CCL de hoy
+    como respaldo. Se arma solo si hace falta (hay transacciones en USD)."""
+    serie = get_ccl_historico("5y")
+    actual = get_ccl_automatico()
+
+    def _fx(fecha: date) -> float | None:
+        valor = ccl_en_fecha(serie, fecha)
+        if valor is None and actual:
+            valor = actual["valor"]
+        return valor
+
+    return _fx
+
+
 def calcular_tenencias(
-    transactions: list[Transaction], instrumentos_por_ticker: dict[str, Instrumento] | None = None
+    transactions: list[Transaction],
+    instrumentos_por_ticker: dict[str, Instrumento] | None = None,
+    fx_usd_ars: TipoCambio | None = None,
 ) -> dict[str, dict]:
-    """Agrega transacciones por ticker: cantidad neta y costo promedio ponderado.
-    Usa costo promedio (no FIFO/LIFO) por simplicidad y transparencia."""
+    """Agrega transacciones por ticker: cantidad neta y costo promedio ponderado
+    (en pesos). Usa costo promedio (no FIFO/LIFO) por simplicidad y transparencia.
+
+    fx_usd_ars: tipo de cambio para convertir transacciones en USD a pesos a
+    la fecha de cada una. Si hay transacciones en USD y no se pasa, se arma
+    con el CCL histórico automáticamente."""
     instrumentos_por_ticker = instrumentos_por_ticker or {}
+    efectivas = transacciones_efectivas(transactions)
+    if fx_usd_ars is None and any(t.moneda == Currency.USD for t in efectivas):
+        fx_usd_ars = tipo_cambio_ccl_historico()
+
     tenencias: dict[str, dict] = {}
-    for t in sorted(transactions, key=lambda x: x.fecha):
+    for t in sorted(efectivas, key=lambda x: (x.fecha, x.creado_en)):
         d = tenencias.setdefault(t.ticker, {"cantidad": 0.0, "costo_total": 0.0})
+        factor = 1.0
+        if t.moneda == Currency.USD:
+            fx = fx_usd_ars(t.fecha) if fx_usd_ars else None
+            if fx:
+                factor = fx
+            else:
+                logger.warning("Sin CCL para convertir %s (%s, USD): se toma el precio sin convertir.", t.id, t.ticker)
         if t.accion == TransactionAction.COMPRA:
             d["cantidad"] += t.cantidad
-            d["costo_total"] += t.cantidad * t.precio + t.comision
+            d["costo_total"] += (t.cantidad * t.precio + t.comision) * factor
         else:  # VENTA: reduce cantidad y costo proporcionalmente (costo promedio)
             if d["cantidad"] > 0:
                 costo_promedio_actual = d["costo_total"] / d["cantidad"]
@@ -78,7 +131,9 @@ def calcular_tenencias_a_fecha(
     """Igual que calcular_tenencias, pero solo considerando movimientos
     hasta una fecha de corte -- permite reconstruir cómo era la cartera
     en el pasado a partir del log completo de transacciones."""
-    filtradas = [t for t in transactions if t.fecha <= fecha_corte]
+    # Primero se resuelven los reversos sobre el log COMPLETO (un reverso
+    # cargado después de la fecha de corte igual anula a la original).
+    filtradas = [t for t in transacciones_efectivas(transactions) if t.fecha <= fecha_corte]
     return calcular_tenencias(filtradas, instrumentos_por_ticker)
 
 

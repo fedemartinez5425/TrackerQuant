@@ -19,6 +19,9 @@ _primary = YFinanceProvider()
 _fallback = AlphaVantageProvider()
 
 _price_cache: dict[str, tuple[float, float]] = {}  # ticker -> (precio, timestamp)
+# (ticker, period) -> (DataFrame, timestamp). Sin esto, cada rerun de Streamlit
+# (cualquier clic) volvía a bajar 2 años de historia de cada posición.
+_history_cache: dict[tuple[str, str], tuple[pd.DataFrame, float]] = {}
 
 
 def get_price(ticker: str, use_cache: bool = True) -> float | None:
@@ -42,13 +45,30 @@ def get_price(ticker: str, use_cache: bool = True) -> float | None:
     return precio
 
 
-def get_history(ticker: str, period: str | None = None) -> pd.DataFrame | None:
+def get_history(ticker: str, period: str | None = None, use_cache: bool = True) -> pd.DataFrame | None:
     period = period or settings.HISTORY_PERIOD
+    clave = (ticker, period)
+    now = time.time()
+    if use_cache and clave in _history_cache:
+        hist, ts = _history_cache[clave]
+        if now - ts < settings.PRICE_CACHE_TTL_SECONDS:
+            return hist.copy()
+
     hist = _primary.get_history(ticker, period=period)
+    if hist is None or hist.empty:
+        logger.info("yfinance sin histórico para %s, probando Alpha Vantage...", ticker)
+        hist = _fallback.get_history(ticker, period=period)
+
     if hist is not None and not hist.empty:
-        return hist
-    logger.info("yfinance sin histórico para %s, probando Alpha Vantage...", ticker)
-    return _fallback.get_history(ticker, period=period)
+        _history_cache[clave] = (hist, now)
+        return hist.copy()
+    return hist
+
+
+def limpiar_cache() -> None:
+    """Vacía los caches en memoria de precios e históricos."""
+    _price_cache.clear()
+    _history_cache.clear()
 
 
 def get_info(ticker: str) -> dict:
@@ -67,6 +87,7 @@ def get_history_multi(tickers: list[str], period: str | None = None) -> pd.DataF
             frames.append(h)
     if not frames:
         return pd.DataFrame()
-    combined = pd.concat(frames, axis=1)
-    combined = combined.ffill().dropna(how="all")
-    return combined
+    # Sin forward-fill: cada serie conserva solo sus días reales de cotización.
+    # La alineación entre calendarios distintos (feriados de un mercado y no
+    # del otro) se hace después, en core/portfolio/historicos.alinear_dias_comunes.
+    return pd.concat(frames, axis=1).dropna(how="all")

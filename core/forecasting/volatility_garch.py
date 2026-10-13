@@ -31,10 +31,16 @@ TRADING_DAYS_PER_YEAR = 252
 def ajustar_garch(retornos: pd.Series):
     """Ajusta un GARCH(1,1) sobre los retornos diarios (en proporción, ej.
     0.01 = 1%). La librería `arch` trabaja mejor en escala porcentual
-    (retornos * 100), así que la conversión se hace acá adentro."""
+    (retornos * 100), así que la conversión se hace acá adentro.
+
+    Distribución t de Student (no normal): los retornos diarios tienen colas
+    más gordas que una normal, y con dist normal el modelo sobre-reacciona a
+    cada día extremo. Si por algún motivo no converge, se reintenta con normal."""
     retornos_pct = (retornos.dropna() * 100).reset_index(drop=True)
-    modelo = arch_model(retornos_pct, vol="Garch", p=1, q=1, mean="Constant", dist="normal")
-    return modelo.fit(disp="off")
+    resultado = arch_model(retornos_pct, vol="Garch", p=1, q=1, mean="Constant", dist="t").fit(disp="off")
+    if resultado.convergence_flag != 0:
+        resultado = arch_model(retornos_pct, vol="Garch", p=1, q=1, mean="Constant", dist="normal").fit(disp="off")
+    return resultado
 
 
 def forecast_volatilidad_anualizada(resultado_garch, horizonte_dias: int) -> pd.Series:
@@ -46,6 +52,14 @@ def forecast_volatilidad_anualizada(resultado_garch, horizonte_dias: int) -> pd.
     vol_anualizada = vol_diaria * np.sqrt(TRADING_DAYS_PER_YEAR)
     vol_anualizada.index = range(1, horizonte_dias + 1)
     return vol_anualizada
+
+
+def vol_promedio_horizonte(forecast_path_vol_anual: pd.Series) -> float:
+    """Volatilidad anualizada PROMEDIO de todo el horizonte (raíz del
+    promedio de las varianzas diarias pronosticadas). Es la que se compara
+    contra la volatilidad realizada en la ventana del backtest -- el valor
+    del último día solo (vol_n_dias) no representa toda la ventana."""
+    return float(np.sqrt((forecast_path_vol_anual ** 2).mean()))
 
 
 def volatilidad_condicional_historica(resultado_garch) -> pd.Series:
@@ -96,12 +110,14 @@ def resumen_forecast_volatilidad(retornos: pd.Series, horizonte_dias: int = 10) 
         "forecast_path": forecast_path,  # índice 1..horizonte_dias
         "vol_actual": vol_actual,
         "vol_promedio_historico": vol_promedio_historico,
-        "vol_n_dias": float(forecast_path.iloc[-1]),
+        "vol_n_dias": float(forecast_path.iloc[-1]),  # vol pronosticada para el día N
+        "vol_horizonte": vol_promedio_horizonte(forecast_path),  # promedio de los N días (la que se guarda)
         "regimen": clasificar_regimen(vol_actual, vol_promedio_historico),
         "parametros": {
             "omega": float(resultado.params.get("omega", float("nan"))),
             "alpha": float(resultado.params.get("alpha[1]", float("nan"))),
             "beta": float(resultado.params.get("beta[1]", float("nan"))),
+            "nu": float(resultado.params.get("nu", float("nan"))),  # grados de libertad de la t (colas)
         },
     }
 

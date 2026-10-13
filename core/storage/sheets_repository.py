@@ -11,13 +11,20 @@ Diseño relacional (5 pestañas = 5 tablas):
 
 Credenciales: en local, un archivo JSON de service account
 (GOOGLE_SERVICE_ACCOUNT_FILE). En Streamlit Cloud, el mismo JSON pero
-pegado en st.secrets (ver config/settings.py -> get_google_credentials_info()),
-nunca commiteado al repo.
+pegado en st.secrets (ver core/storage/__init__.py), nunca commiteado al repo.
+
+Cuota de la API: Google Sheets permite ~60 lecturas por minuto por usuario.
+Antes cada rerun de Streamlit hacía ~4 llamadas (buscar la pestaña + leer
+todo) y era fácil recibir errores 429. Ahora:
+- los objetos Worksheet se resuelven UNA vez (no se vuelve a pedir metadata);
+- cada pestaña leída se cachea en memoria CACHE_TTL_SEGUNDOS, y cualquier
+  escritura de esta app sobre esa pestaña invalida su cache al instante;
+- las altas en lote usan append_rows (una sola llamada).
 """
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+import time
 
 from core.storage.base_repository import BaseRepository
 from core.storage.csv_repository import (
@@ -35,8 +42,6 @@ from core.storage.models import (
     PortfolioSnapshot,
     ProcessedFile,
     Transaction,
-    TransactionAction,
-    TipoInstrumento,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +52,12 @@ SHEET_AUDIT = "audit_log"
 SHEET_SNAPSHOTS = "portfolio_snapshots"
 SHEET_FORECASTS = "forecast_log"
 SHEET_PROCESSED_FILES = "processed_files"
+
+CACHE_TTL_SEGUNDOS = 60
+
+
+def _celdas(row: dict, fields: list[str]) -> list[str]:
+    return ["" if row.get(f) is None else str(row.get(f)) for f in fields]
 
 
 class SheetsRepository(BaseRepository):
@@ -61,47 +72,85 @@ class SheetsRepository(BaseRepository):
             creds = Credentials.from_service_account_file(service_account_file, scopes=scopes)
         self.client = gspread.authorize(creds)
         self.spreadsheet = self.client.open_by_key(spreadsheet_id)
-        self._ensure_worksheet(SHEET_INSTRUMENTOS, INSTRUMENTO_FIELDS)
-        self._ensure_worksheet(SHEET_TRANSACTIONS, TRANSACTION_FIELDS)
-        self._ensure_worksheet(SHEET_AUDIT, AUDIT_FIELDS)
-        self._ensure_worksheet(SHEET_SNAPSHOTS, SNAPSHOT_FIELDS)
-        self._ensure_worksheet(SHEET_FORECASTS, FORECAST_FIELDS)
-        self._ensure_worksheet(SHEET_PROCESSED_FILES, PROCESSED_FILE_FIELDS)
+        self._worksheets: dict = {}
+        self._cache_filas: dict[str, tuple[float, list[str], list[list[str]]]] = {}
 
-    def _ensure_worksheet(self, title: str, headers: list[str]):
-        try:
-            ws = self.spreadsheet.worksheet(title)
-        except Exception:  # noqa: BLE001 - gspread.WorksheetNotFound
-            ws = self.spreadsheet.add_worksheet(title=title, rows=2000, cols=len(headers) + 2)
-            ws.append_row(headers)
-        return ws
+        existentes = {ws.title: ws for ws in self.spreadsheet.worksheets()}  # 1 sola llamada
+        for titulo, headers in (
+            (SHEET_INSTRUMENTOS, INSTRUMENTO_FIELDS),
+            (SHEET_TRANSACTIONS, TRANSACTION_FIELDS),
+            (SHEET_AUDIT, AUDIT_FIELDS),
+            (SHEET_SNAPSHOTS, SNAPSHOT_FIELDS),
+            (SHEET_FORECASTS, FORECAST_FIELDS),
+            (SHEET_PROCESSED_FILES, PROCESSED_FILE_FIELDS),
+        ):
+            ws = existentes.get(titulo)
+            if ws is None:
+                ws = self.spreadsheet.add_worksheet(title=titulo, rows=2000, cols=len(headers) + 2)
+                ws.append_row(headers)
+            self._worksheets[titulo] = ws
 
+    # ---------------- helpers ----------------
     def _worksheet(self, title: str):
-        return self.spreadsheet.worksheet(title)
+        return self._worksheets[title]
+
+    def _invalidar(self, title: str) -> None:
+        self._cache_filas.pop(title, None)
+
+    def invalidar_cache(self) -> None:
+        """Fuerza a releer todo de Sheets (ej. si editaste la planilla a mano)."""
+        self._cache_filas.clear()
 
     @staticmethod
     def _row_to_dict(headers: list[str], row: list[str]) -> dict:
         return {h: (row[i] if i < len(row) else "") for i, h in enumerate(headers)}
 
     def _all_rows(self, title: str) -> tuple[list[str], list[list[str]]]:
-        values = self.spreadsheet.worksheet(title).get_all_values()
-        if len(values) < 2:
-            return [], []
-        return values[0], values[1:]
+        ahora = time.time()
+        cacheado = self._cache_filas.get(title)
+        if cacheado and ahora - cacheado[0] < CACHE_TTL_SEGUNDOS:
+            return cacheado[1], cacheado[2]
+        values = self._worksheet(title).get_all_values()
+        headers, rows = (values[0], values[1:]) if len(values) >= 2 else ((values[0] if values else []), [])
+        self._cache_filas[title] = (ahora, headers, rows)
+        return headers, rows
+
+    def _dicts(self, title: str, campo_clave: str = "id") -> list[dict]:
+        headers, rows = self._all_rows(title)
+        out = []
+        for r in rows:
+            d = self._row_to_dict(headers, r)
+            if d.get(campo_clave):
+                out.append(d)
+        return out
+
+    def _append(self, title: str, fields: list[str], filas: list[dict]) -> None:
+        if not filas:
+            return
+        ws = self._worksheet(title)
+        if len(filas) == 1:
+            ws.append_row(_celdas(filas[0], fields))
+        else:
+            ws.append_rows([_celdas(f, fields) for f in filas])
+        self._invalidar(title)
 
     # ---------------- Instrumentos ----------------
     def upsert_instrumento(self, instrumento: Instrumento) -> None:
+        from gspread.utils import rowcol_to_a1
+
         ws = self._worksheet(SHEET_INSTRUMENTOS)
+        self._invalidar(SHEET_INSTRUMENTOS)  # leer fresco antes de decidir update vs append
         headers, rows = self._all_rows(SHEET_INSTRUMENTOS)
-        row_dict = instrumento.to_row()
-        nueva_fila = [str(row_dict.get(f, "") if row_dict.get(f) is not None else "") for f in INSTRUMENTO_FIELDS]
+        nueva_fila = _celdas(instrumento.to_row(), INSTRUMENTO_FIELDS)
 
         for i, r in enumerate(rows, start=2):  # +2: fila 1 es header, gspread es 1-indexed
             d = self._row_to_dict(headers, r)
             if d.get("ticker") == instrumento.ticker:
-                ws.update(f"A{i}:{chr(64 + len(INSTRUMENTO_FIELDS))}{i}", [nueva_fila])
+                rango = f"A{i}:{rowcol_to_a1(i, len(INSTRUMENTO_FIELDS))}"
+                ws.update(range_name=rango, values=[nueva_fila])
+                self._invalidar(SHEET_INSTRUMENTOS)
                 return
-        ws.append_row(nueva_fila)
+        self._append(SHEET_INSTRUMENTOS, INSTRUMENTO_FIELDS, [instrumento.to_row()])
 
     def get_instrumento(self, ticker: str) -> Instrumento | None:
         for inst in self.list_instrumentos():
@@ -110,165 +159,45 @@ class SheetsRepository(BaseRepository):
         return None
 
     def list_instrumentos(self) -> list[Instrumento]:
-        headers, rows = self._all_rows(SHEET_INSTRUMENTOS)
-        out = []
-        for r in rows:
-            d = self._row_to_dict(headers, r)
-            if not d.get("ticker"):
-                continue
-            out.append(
-                Instrumento(
-                    ticker=d["ticker"],
-                    tipo_instrumento=TipoInstrumento(d.get("tipo_instrumento") or "ACCION_ARG"),
-                    ticker_usd=d.get("ticker_usd") or None,
-                    ratio_cedear=float(d["ratio_cedear"]) if d.get("ratio_cedear") else None,
-                    nombre=d.get("nombre", ""),
-                    actualizado_en=datetime.fromisoformat(d["actualizado_en"]),
-                )
-            )
-        return out
+        return [Instrumento.from_row(d) for d in self._dicts(SHEET_INSTRUMENTOS, "ticker")]
 
     # ---------------- Transacciones ----------------
     def add_transaction(self, transaction: Transaction) -> None:
-        ws = self._worksheet(SHEET_TRANSACTIONS)
-        row = transaction.to_row()
-        ws.append_row([str(row.get(f, "") if row.get(f) is not None else "") for f in TRANSACTION_FIELDS])
+        self.add_transactions([transaction])
+
+    def add_transactions(self, transactions: list[Transaction]) -> None:
+        self._append(SHEET_TRANSACTIONS, TRANSACTION_FIELDS, [t.to_row() for t in transactions])
 
     def list_transactions(self) -> list[Transaction]:
-        headers, rows = self._all_rows(SHEET_TRANSACTIONS)
-        out = []
-        for r in rows:
-            d = self._row_to_dict(headers, r)
-            if not d.get("id"):
-                continue
-            out.append(
-                Transaction(
-                    id=d["id"],
-                    id_externo=d.get("id_externo") or None,
-                    fecha=date.fromisoformat(d["fecha"]),
-                    ticker=d["ticker"],
-                    accion=TransactionAction(d["accion"]),
-                    cantidad=float(d["cantidad"]),
-                    precio=float(d["precio"]),
-                    moneda=d.get("moneda", "ARS"),
-                    comision=float(d.get("comision") or 0.0),
-                    notas=d.get("notas", ""),
-                    creado_en=datetime.fromisoformat(d["creado_en"]),
-                )
-            )
-        return out
-
-    def add_reversal(self, original_id: str, motivo: str, usuario: str) -> Transaction:
-        originales = [t for t in self.list_transactions() if t.id == original_id]
-        if not originales:
-            raise ValueError(f"No existe la transacción {original_id}")
-        original = originales[0]
-        accion_inversa = (
-            TransactionAction.VENTA
-            if original.accion == TransactionAction.COMPRA
-            else TransactionAction.COMPRA
-        )
-        reverso = Transaction(
-            fecha=date.today(),
-            ticker=original.ticker,
-            accion=accion_inversa,
-            cantidad=original.cantidad,
-            precio=original.precio,
-            moneda=original.moneda,
-            comision=0.0,
-            notas=f"REVERSO de {original_id} — motivo: {motivo}",
-        )
-        self.add_transaction(reverso)
-        self.add_audit_event(
-            AuditEvent(usuario=usuario, accion="REVERSO_TRANSACCION", detalle=f"Reversó {original_id} ({motivo})")
-        )
-        return reverso
+        return [Transaction.from_row(d) for d in self._dicts(SHEET_TRANSACTIONS)]
 
     # ---------------- Snapshots ----------------
     def add_snapshot(self, snapshot: PortfolioSnapshot) -> None:
-        ws = self._worksheet(SHEET_SNAPSHOTS)
-        row = snapshot.to_row()
-        ws.append_row([str(row.get(f, "") if row.get(f) is not None else "") for f in SNAPSHOT_FIELDS])
+        self._append(SHEET_SNAPSHOTS, SNAPSHOT_FIELDS, [snapshot.to_row()])
 
     def list_snapshots(self) -> list[PortfolioSnapshot]:
-        headers, rows = self._all_rows(SHEET_SNAPSHOTS)
-        out = []
-        for r in rows:
-            d = self._row_to_dict(headers, r)
-            if not d.get("id"):
-                continue
-            out.append(
-                PortfolioSnapshot(
-                    id=d["id"],
-                    fecha=date.fromisoformat(d["fecha"]),
-                    valor_total_usd=float(d["valor_total_usd"]),
-                    cantidad_posiciones=int(d["cantidad_posiciones"]),
-                    volatilidad_anualizada=float(d["volatilidad_anualizada"]) if d.get("volatilidad_anualizada") else None,
-                    var_95_pct=float(d["var_95_pct"]) if d.get("var_95_pct") else None,
-                    beta_vs_benchmark=float(d["beta_vs_benchmark"]) if d.get("beta_vs_benchmark") else None,
-                    correlacion_promedio=float(d["correlacion_promedio"]) if d.get("correlacion_promedio") else None,
-                    composicion_json=d.get("composicion_json", ""),
-                    creado_en=datetime.fromisoformat(d["creado_en"]),
-                )
-            )
+        out = [PortfolioSnapshot.from_row(d) for d in self._dicts(SHEET_SNAPSHOTS)]
         return sorted(out, key=lambda s: s.fecha)
 
     # ---------------- Forecasts ----------------
     def add_forecast(self, forecast: PortfolioForecast) -> None:
-        ws = self._worksheet(SHEET_FORECASTS)
-        row = forecast.to_row()
-        ws.append_row([str(row.get(f, "")) for f in FORECAST_FIELDS])
+        self._append(SHEET_FORECASTS, FORECAST_FIELDS, [forecast.to_row()])
 
     def list_forecasts(self) -> list[PortfolioForecast]:
-        headers, rows = self._all_rows(SHEET_FORECASTS)
-        out = []
-        for r in rows:
-            d = self._row_to_dict(headers, r)
-            if not d.get("id"):
-                continue
-            out.append(
-                PortfolioForecast(
-                    id=d["id"],
-                    fecha=date.fromisoformat(d["fecha"]),
-                    horizonte_dias=int(d["horizonte_dias"]),
-                    vol_pronosticada_anual=float(d["vol_pronosticada_anual"]),
-                    metodo=d.get("metodo", "GARCH(1,1)"),
-                    composicion_json=d.get("composicion_json", ""),
-                    creado_en=datetime.fromisoformat(d["creado_en"]),
-                )
-            )
+        out = [PortfolioForecast.from_row(d) for d in self._dicts(SHEET_FORECASTS)]
         return sorted(out, key=lambda f: f.fecha, reverse=True)
 
     # ---------------- Archivos procesados (Drive sync) ----------------
     def add_processed_file(self, processed: ProcessedFile) -> None:
-        ws = self._worksheet(SHEET_PROCESSED_FILES)
-        row = processed.to_row()
-        ws.append_row([str(row.get(f, "")) for f in PROCESSED_FILE_FIELDS])
+        self._append(SHEET_PROCESSED_FILES, PROCESSED_FILE_FIELDS, [processed.to_row()])
 
     def list_processed_file_ids(self) -> set[str]:
-        headers, rows = self._all_rows(SHEET_PROCESSED_FILES)
-        return {self._row_to_dict(headers, r).get("drive_file_id") for r in rows} - {None, ""}
+        return {d["drive_file_id"] for d in self._dicts(SHEET_PROCESSED_FILES, "drive_file_id")}
 
     # ---------------- Auditoría ----------------
     def add_audit_event(self, event: AuditEvent) -> None:
-        ws = self._worksheet(SHEET_AUDIT)
-        row = event.to_row()
-        ws.append_row([str(row.get(f, "")) for f in AUDIT_FIELDS])
+        self._append(SHEET_AUDIT, AUDIT_FIELDS, [event.to_row()])
 
     def list_audit_events(self, limit: int = 200) -> list[AuditEvent]:
-        headers, rows = self._all_rows(SHEET_AUDIT)
-        out = []
-        for r in rows:
-            d = self._row_to_dict(headers, r)
-            if not d.get("id"):
-                continue
-            out.append(
-                AuditEvent(
-                    id=d["id"],
-                    timestamp=datetime.fromisoformat(d["timestamp"]),
-                    usuario=d["usuario"],
-                    accion=d["accion"],
-                    detalle=d.get("detalle", ""),
-                )
-            )
+        out = [AuditEvent.from_row(d) for d in self._dicts(SHEET_AUDIT)]
         return sorted(out, key=lambda e: e.timestamp, reverse=True)[:limit]

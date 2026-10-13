@@ -3,7 +3,14 @@ import json
 import pandas as pd
 import streamlit as st
 
-from app_helpers import formato_moneda, formato_pct, obtener_cartera_actual, obtener_historicos_riesgo, require_login
+from app_helpers import (
+    avisar_excluidos,
+    formato_moneda,
+    formato_pct,
+    obtener_cartera_actual,
+    obtener_historicos_riesgo,
+    require_login,
+)
 from config.settings import settings
 from core.forecasting.backtest import tabla_backtest
 from core.forecasting.returns_forecast import cono_incertidumbre, proyectar_retorno_acumulado, proyectar_valor_cartera
@@ -35,6 +42,7 @@ if historicos.empty or len(historicos) < 120:
     st.warning("Se necesita al menos ~6 meses de histórico de precios para que el modelo GARCH converja de forma confiable.")
     st.stop()
 
+avisar_excluidos(historicos)
 retornos = historicos.pct_change().dropna(how="all")
 retorno_cartera = retorno_diario_cartera(retornos, pesos)
 
@@ -51,7 +59,11 @@ with tab_vol:
     else:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Volatilidad condicional (hoy)", formato_pct(resumen_vol["vol_actual"]))
-        c2.metric(f"Pronóstico a {horizonte_dias}d", formato_pct(resumen_vol["vol_n_dias"]))
+        c2.metric(
+            f"Pronóstico promedio {horizonte_dias}d", formato_pct(resumen_vol["vol_horizonte"]),
+            help=f"Volatilidad promedio de los próximos {horizonte_dias} días hábiles. "
+            f"La del día {horizonte_dias} solo: {formato_pct(resumen_vol['vol_n_dias'])}.",
+        )
         c3.metric("Promedio histórico", formato_pct(resumen_vol["vol_promedio_historico"]))
         c4.metric("Régimen actual", "")
         st.markdown(f"##### {resumen_vol['regimen']}")
@@ -74,6 +86,8 @@ se agrupan) — algo que un promedio móvil simple no ve.
 **Parámetros ajustados a tu cartera:** ω={resumen_vol['parametros']['omega']:.4f},
 α={resumen_vol['parametros']['alpha']:.4f}, β={resumen_vol['parametros']['beta']:.4f}
 (α+β cercano a 1 = la volatilidad es muy persistente, tarda en volver a su promedio).
+Distribución t de Student con ν={resumen_vol['parametros']['nu']:.1f} grados de libertad
+(cuanto más bajo ν, más "gordas" las colas: más probables los días extremos que en una normal).
 
 **Limitación honesta:** el modelo asume que el patrón de volatilidad pasado se mantiene — no
 anticipa shocks nuevos (una noticia, un cambio de política). Es un pronóstico estadístico, no una
@@ -85,7 +99,8 @@ bola de cristal.
             repo = get_repository()
             forecast = PortfolioForecast(
                 horizonte_dias=horizonte_dias,
-                vol_pronosticada_anual=resumen_vol["vol_n_dias"],
+                vol_pronosticada_anual=resumen_vol["vol_horizonte"],
+                metodo="GARCH(1,1)-t",
                 composicion_json=json.dumps(pesos),
             )
             repo.add_forecast(forecast)
@@ -102,7 +117,7 @@ with tab_retornos:
     if resumen_vol is None:
         st.info("Necesita el forecast de volatilidad de la pestaña anterior.")
     else:
-        proyeccion = proyectar_retorno_acumulado(retorno_cartera, horizonte_dias, resumen_vol["vol_n_dias"])
+        proyeccion = proyectar_retorno_acumulado(retorno_cartera, horizonte_dias, resumen_vol["vol_horizonte"])
         proyeccion_dinero = proyectar_valor_cartera(proyeccion, resumen["valor_actual_total"])
 
         c1, c2, c3 = st.columns(3)

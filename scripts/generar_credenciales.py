@@ -7,6 +7,7 @@ config/credentials.yaml con la contraseña ya hasheada con bcrypt.
 Ejecutalo desde la raíz del proyecto.
 """
 import getpass
+import secrets
 import sys
 from pathlib import Path
 
@@ -27,13 +28,20 @@ def main():
     else:
         config = {
             "credentials": {"usernames": {}},
-            "cookie": {"name": "tracker_cuantitativo_auth", "key": settings.COOKIE_KEY, "expiry_days": 1},
+            "cookie": {"name": "tracker_riesgo_auth", "key": settings.COOKIE_KEY or secrets.token_hex(32), "expiry_days": 1},
         }
 
     username = input("Usuario (sin espacios, ej: fede): ").strip()
     nombre = input("Nombre para mostrar: ").strip()
     email = input("Email: ").strip()
     password = getpass.getpass("Contraseña: ")
+
+    if len(password) < 8:
+        print("La contraseña debe tener al menos 8 caracteres.")
+        sys.exit(1)
+    if getpass.getpass("Repetí la contraseña: ") != password:
+        print("Las contraseñas no coinciden.")
+        sys.exit(1)
 
     hashed = stauth.Hasher([password]).generate()[0]
     config["credentials"]["usernames"][username] = {
@@ -47,6 +55,10 @@ def main():
         yaml.dump(config, f)
 
     print(f"\nUsuario '{username}' guardado en {path}")
+    print(
+        "\nPara Streamlit Cloud, pegá esto en Settings -> Secrets:\n"
+        f"[credentials.usernames.{username}]\nname = \"{nombre}\"\nemail = \"{email}\"\npassword = \"{hashed}\"\n"
+    )
 
 
 if __name__ == "__main__":

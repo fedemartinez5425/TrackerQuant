@@ -3,12 +3,20 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from app_helpers import obtener_instrumentos, obtener_transacciones, require_login
+from app_helpers import invalidar_caches, obtener_instrumentos, obtener_transacciones, require_login
 from config.settings import settings
 from core import data_providers
 from core.data_providers.comafi_ratios import obtener_ratio
 from core.storage import get_repository
-from core.storage.models import AuditEvent, Currency, Instrumento, TipoInstrumento, Transaction, TransactionAction
+from core.storage.models import (
+    AuditEvent,
+    Currency,
+    Instrumento,
+    TipoInstrumento,
+    Transaction,
+    TransactionAction,
+    ids_reversados,
+)
 from core.validation.schemas import validar_transaccion_completa
 
 username = require_login()
@@ -58,6 +66,10 @@ with tab_movimiento:
                     nombre=nombre_nuevo,
                 )
                 repo.upsert_instrumento(inst)
+                repo.add_audit_event(
+                    AuditEvent(usuario=username, accion="ALTA_INSTRUMENTO", detalle=f"{ticker_input}: {tipo_nuevo}")
+                )
+                invalidar_caches()
                 st.success(f"Instrumento {ticker_input} registrado. Ahora cargá la transacción abajo.")
                 st.rerun()
             except Exception as exc:  # noqa: BLE001
@@ -128,7 +140,7 @@ with tab_movimiento:
                             )
                         )
                         st.success(f"Transacción cargada: {nueva.accion.value} {nueva.cantidad} {nueva.ticker} @ {nueva.precio}")
-                        st.cache_data.clear()
+                        invalidar_caches()
                         st.rerun()
 
     st.divider()
@@ -138,26 +150,46 @@ with tab_movimiento:
     if not transacciones:
         st.info("Todavía no hay transacciones cargadas.")
     else:
-        df = pd.DataFrame([t.to_row() for t in sorted(transacciones, key=lambda x: x.fecha, reverse=True)])
-        st.dataframe(df, width="stretch", hide_index=True)
+        anuladas = ids_reversados(transacciones)
+
+        def _estado(t: Transaction) -> str:
+            if t.revierte_a:
+                return "↩️ Reverso"
+            if t.id in anuladas:
+                return "❌ Anulada"
+            return "✅ Vigente"
+
+        filas = [{"estado": _estado(t), **t.to_row()} for t in sorted(transacciones, key=lambda x: x.fecha, reverse=True)]
+        st.dataframe(pd.DataFrame(filas), width="stretch", hide_index=True)
 
         st.divider()
         st.subheader("Reversar una transacción")
-        st.caption("No se edita ni se borra: se agrega el movimiento inverso, dejando ambos en el historial.")
-        ids_disponibles = [t.id for t in transacciones]
+        st.caption(
+            "No se edita ni se borra: se agrega un reverso que ANULA la transacción original. Ambas quedan "
+            "en el historial (marcadas), y ninguna de las dos cuenta para la cartera, el costo ni los escenarios."
+        )
+        reversables = [t for t in sorted(transacciones, key=lambda x: x.fecha, reverse=True) if not t.revierte_a and t.id not in anuladas]
+        etiquetas = {
+            t.id: f"{t.id} · {t.fecha} · {t.accion.value} {t.cantidad:g} {t.ticker} @ {t.precio:,.2f}" for t in reversables
+        }
         col1, col2 = st.columns([1, 2])
         with col1:
-            id_a_reversar = st.selectbox("ID de transacción", ids_disponibles)
+            id_a_reversar = st.selectbox(
+                "Transacción", list(etiquetas), format_func=lambda i: etiquetas[i],
+                index=None, placeholder="Elegí una transacción vigente",
+            )
         with col2:
             motivo = st.text_input("Motivo del reverso")
         if st.button("Reversar transacción"):
-            if not motivo:
+            if not id_a_reversar:
+                st.error("Elegí qué transacción reversar.")
+            elif not motivo:
                 st.error("Indicá un motivo para el reverso (queda en el registro de auditoría).")
             else:
                 try:
                     repo.add_reversal(id_a_reversar, motivo, usuario=username)
                     st.success("Reverso cargado correctamente.")
-                    st.cache_data.clear()
+                    invalidar_caches()
                     st.rerun()
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"No se pudo reversar: {exc}")
@@ -206,7 +238,7 @@ with tab_instrumentos:
                     AuditEvent(usuario=username, accion="EDITAR_INSTRUMENTO", detalle=f"{ticker_editar}: {tipo_edit}, ratio={ratio_edit}")
                 )
                 st.success(f"{ticker_editar} actualizado.")
-                st.cache_data.clear()
+                invalidar_caches()
                 st.rerun()
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Error de validación: {exc}")

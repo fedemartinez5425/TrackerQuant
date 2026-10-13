@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import csv
 import logging
-from datetime import date, datetime
 from pathlib import Path
 
 from core.storage.base_repository import BaseRepository
@@ -26,8 +25,6 @@ from core.storage.models import (
     PortfolioSnapshot,
     ProcessedFile,
     Transaction,
-    TransactionAction,
-    TipoInstrumento,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,6 +73,21 @@ class CsvRepository(BaseRepository):
         _ensure_file(self.processed_files_file, PROCESSED_FILE_FIELDS)
         _ensure_file(self.forecasts_file, FORECAST_FIELDS)
 
+    # ---------------- helpers ----------------
+    @staticmethod
+    def _leer(path: Path, campo_clave: str = "id") -> list[dict]:
+        if not path.exists():
+            return []
+        with path.open("r", newline="", encoding="utf-8") as f:
+            return [row for row in csv.DictReader(f) if row.get(campo_clave)]
+
+    @staticmethod
+    def _agregar(path: Path, fields: list[str], filas: list[dict]) -> None:
+        with path.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            for fila in filas:
+                writer.writerow(fila)
+
     # ---------------- Instrumentos ----------------
     def upsert_instrumento(self, instrumento: Instrumento) -> None:
         existentes = self.list_instrumentos()
@@ -101,179 +113,48 @@ class CsvRepository(BaseRepository):
         return None
 
     def list_instrumentos(self) -> list[Instrumento]:
-        if not self.instrumentos_file.exists():
-            return []
-        out = []
-        with self.instrumentos_file.open("r", newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                if not row.get("ticker"):
-                    continue
-                out.append(
-                    Instrumento(
-                        ticker=row["ticker"],
-                        tipo_instrumento=TipoInstrumento(row.get("tipo_instrumento") or "ACCION_ARG"),
-                        ticker_usd=row.get("ticker_usd") or None,
-                        ratio_cedear=float(row["ratio_cedear"]) if row.get("ratio_cedear") else None,
-                        nombre=row.get("nombre", ""),
-                        actualizado_en=datetime.fromisoformat(row["actualizado_en"]),
-                    )
-                )
-        return out
+        return [Instrumento.from_row(r) for r in self._leer(self.instrumentos_file, "ticker")]
 
     # ---------------- Transacciones ----------------
     def add_transaction(self, transaction: Transaction) -> None:
-        with self.transactions_file.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=TRANSACTION_FIELDS)
-            writer.writerow(transaction.to_row())
-        logger.info("Transacción agregada: %s %s %s", transaction.accion, transaction.cantidad, transaction.ticker)
+        self.add_transactions([transaction])
+
+    def add_transactions(self, transactions: list[Transaction]) -> None:
+        if not transactions:
+            return
+        self._agregar(self.transactions_file, TRANSACTION_FIELDS, [t.to_row() for t in transactions])
+        logger.info("%d transacción(es) agregada(s).", len(transactions))
 
     def list_transactions(self) -> list[Transaction]:
-        if not self.transactions_file.exists():
-            return []
-        out = []
-        with self.transactions_file.open("r", newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                if not row.get("id"):
-                    continue
-                out.append(
-                    Transaction(
-                        id=row["id"],
-                        id_externo=row.get("id_externo") or None,
-                        fecha=date.fromisoformat(row["fecha"]),
-                        ticker=row["ticker"],
-                        accion=TransactionAction(row["accion"]),
-                        cantidad=float(row["cantidad"]),
-                        precio=float(row["precio"]),
-                        moneda=row.get("moneda", "ARS"),
-                        comision=float(row.get("comision") or 0.0),
-                        notas=row.get("notas", ""),
-                        creado_en=datetime.fromisoformat(row["creado_en"]),
-                    )
-                )
-        return out
-
-    def add_reversal(self, original_id: str, motivo: str, usuario: str) -> Transaction:
-        """Nunca se borra ni edita una transacción: se agrega el movimiento inverso."""
-        originales = [t for t in self.list_transactions() if t.id == original_id]
-        if not originales:
-            raise ValueError(f"No existe la transacción {original_id}")
-        original = originales[0]
-
-        accion_inversa = (
-            TransactionAction.VENTA
-            if original.accion == TransactionAction.COMPRA
-            else TransactionAction.COMPRA
-        )
-        reverso = Transaction(
-            fecha=date.today(),
-            ticker=original.ticker,
-            accion=accion_inversa,
-            cantidad=original.cantidad,
-            precio=original.precio,
-            moneda=original.moneda,
-            comision=0.0,
-            notas=f"REVERSO de {original_id} — motivo: {motivo}",
-        )
-        self.add_transaction(reverso)
-        self.add_audit_event(
-            AuditEvent(
-                usuario=usuario,
-                accion="REVERSO_TRANSACCION",
-                detalle=f"Reversó {original_id} ({motivo})",
-            )
-        )
-        return reverso
+        return [Transaction.from_row(r) for r in self._leer(self.transactions_file)]
 
     # ---------------- Snapshots ----------------
     def add_snapshot(self, snapshot: PortfolioSnapshot) -> None:
-        with self.snapshots_file.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=SNAPSHOT_FIELDS)
-            writer.writerow(snapshot.to_row())
+        self._agregar(self.snapshots_file, SNAPSHOT_FIELDS, [snapshot.to_row()])
 
     def list_snapshots(self) -> list[PortfolioSnapshot]:
-        if not self.snapshots_file.exists():
-            return []
-        out = []
-        with self.snapshots_file.open("r", newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                if not row.get("id"):
-                    continue
-                out.append(
-                    PortfolioSnapshot(
-                        id=row["id"],
-                        fecha=date.fromisoformat(row["fecha"]),
-                        valor_total_usd=float(row["valor_total_usd"]),
-                        cantidad_posiciones=int(row["cantidad_posiciones"]),
-                        volatilidad_anualizada=float(row["volatilidad_anualizada"]) if row.get("volatilidad_anualizada") else None,
-                        var_95_pct=float(row["var_95_pct"]) if row.get("var_95_pct") else None,
-                        beta_vs_benchmark=float(row["beta_vs_benchmark"]) if row.get("beta_vs_benchmark") else None,
-                        correlacion_promedio=float(row["correlacion_promedio"]) if row.get("correlacion_promedio") else None,
-                        composicion_json=row.get("composicion_json", ""),
-                        creado_en=datetime.fromisoformat(row["creado_en"]),
-                    )
-                )
+        out = [PortfolioSnapshot.from_row(r) for r in self._leer(self.snapshots_file)]
         return sorted(out, key=lambda s: s.fecha)
 
     # ---------------- Forecasts ----------------
     def add_forecast(self, forecast: PortfolioForecast) -> None:
-        with self.forecasts_file.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=FORECAST_FIELDS)
-            writer.writerow(forecast.to_row())
+        self._agregar(self.forecasts_file, FORECAST_FIELDS, [forecast.to_row()])
 
     def list_forecasts(self) -> list[PortfolioForecast]:
-        if not self.forecasts_file.exists():
-            return []
-        out = []
-        with self.forecasts_file.open("r", newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                if not row.get("id"):
-                    continue
-                out.append(
-                    PortfolioForecast(
-                        id=row["id"],
-                        fecha=date.fromisoformat(row["fecha"]),
-                        horizonte_dias=int(row["horizonte_dias"]),
-                        vol_pronosticada_anual=float(row["vol_pronosticada_anual"]),
-                        metodo=row.get("metodo", "GARCH(1,1)"),
-                        composicion_json=row.get("composicion_json", ""),
-                        creado_en=datetime.fromisoformat(row["creado_en"]),
-                    )
-                )
+        out = [PortfolioForecast.from_row(r) for r in self._leer(self.forecasts_file)]
         return sorted(out, key=lambda f: f.fecha, reverse=True)
 
     # ---------------- Archivos procesados (Drive sync) ----------------
     def add_processed_file(self, processed: ProcessedFile) -> None:
-        with self.processed_files_file.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=PROCESSED_FILE_FIELDS)
-            writer.writerow(processed.to_row())
+        self._agregar(self.processed_files_file, PROCESSED_FILE_FIELDS, [processed.to_row()])
 
     def list_processed_file_ids(self) -> set[str]:
-        if not self.processed_files_file.exists():
-            return set()
-        with self.processed_files_file.open("r", newline="", encoding="utf-8") as f:
-            return {row["drive_file_id"] for row in csv.DictReader(f) if row.get("drive_file_id")}
+        return {r["drive_file_id"] for r in self._leer(self.processed_files_file, "drive_file_id")}
 
     # ---------------- Auditoría ----------------
     def add_audit_event(self, event: AuditEvent) -> None:
-        with self.audit_file.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=AUDIT_FIELDS)
-            writer.writerow(event.to_row())
+        self._agregar(self.audit_file, AUDIT_FIELDS, [event.to_row()])
 
     def list_audit_events(self, limit: int = 200) -> list[AuditEvent]:
-        if not self.audit_file.exists():
-            return []
-        out = []
-        with self.audit_file.open("r", newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                if not row.get("id"):
-                    continue
-                out.append(
-                    AuditEvent(
-                        id=row["id"],
-                        timestamp=datetime.fromisoformat(row["timestamp"]),
-                        usuario=row["usuario"],
-                        accion=row["accion"],
-                        detalle=row.get("detalle", ""),
-                    )
-                )
+        out = [AuditEvent.from_row(r) for r in self._leer(self.audit_file)]
         return sorted(out, key=lambda e: e.timestamp, reverse=True)[:limit]

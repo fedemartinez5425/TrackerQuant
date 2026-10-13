@@ -59,9 +59,13 @@ def cono_incertidumbre(
     fijo) -- así el cono se ensancha de forma consistente con el modelo."""
     mu_diario = float(retornos.dropna().mean())
     filas = []
-    for dia, vol_anual_dia in forecast_path_vol_anual.items():
+    varianza_acum = 0.0
+    for dia, vol_anual_dia in forecast_path_vol_anual.sort_index().items():
+        # La varianza de un retorno acumulado es la SUMA de las varianzas
+        # diarias de cada día del camino (no la del día d × d).
         vol_diaria = vol_anual_dia / np.sqrt(252)
-        desvio_acum = vol_diaria * np.sqrt(dia)
+        varianza_acum += vol_diaria ** 2
+        desvio_acum = np.sqrt(varianza_acum)
         retorno_acum = mu_diario * dia
         filas.append(
             {

@@ -8,6 +8,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from core.risk.volatility import pesos_disponibles
+
 
 def calcular_retornos_diarios(precios: pd.DataFrame) -> pd.DataFrame:
     return precios.pct_change().dropna(how="all")
@@ -20,12 +22,13 @@ def contribucion_al_riesgo(retornos: pd.DataFrame, pesos: dict[str, float]) -> p
 
     MCTR_i = (w_i * (Cov @ w)_i) / (w' Cov w)
     """
-    tickers = [t for t in pesos if t in retornos.columns]
+    pesos_ok = pesos_disponibles(pesos, retornos.columns)
+    tickers = list(pesos_ok)
     if len(tickers) < 1:
         return pd.Series(dtype=float)
 
-    w = np.array([pesos[t] for t in tickers])
-    cov = retornos[tickers].cov().values * 252  # anualizada
+    w = np.array([pesos_ok[t] for t in tickers])
+    cov = retornos[tickers].dropna().cov().values * 252  # anualizada
 
     varianza_cartera = w @ cov @ w
     if varianza_cartera <= 0:

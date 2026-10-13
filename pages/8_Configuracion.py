@@ -1,11 +1,11 @@
 import pandas as pd
 import streamlit as st
 
-from app_helpers import require_login
+from app_helpers import invalidar_caches, require_login
 from config.settings import settings
 from core.cloud_secrets import get_secret
 from core.data_providers.comafi_ratios import actualizar_cache, leer_cache
-from core.storage import get_repository
+from core.storage import get_backend_status, get_repository
 
 username = require_login()
 repo = get_repository()
@@ -13,31 +13,36 @@ repo = get_repository()
 st.title("⚙️ Configuración")
 
 st.subheader("Storage backend")
-st.write(f"Backend activo: **`{settings.STORAGE_BACKEND}`**")
-st.markdown(
-    """
-Por defecto la app guarda todo en CSV local (`/data`), así funciona sin configurar nada
-mientras armás la planilla.
+estado = get_backend_status()
+st.write(f"Backend activo: **`{estado['activo']}`** (pedido: `{estado['solicitado']}`)")
+if estado["error"]:
+    st.caption(f"Motivo del fallback a CSV: `{estado['error']}`")
 
-**El objetivo de este proyecto es usar Google Sheets como log de transacciones y de
-snapshots históricos**, para poder después analizar la evolución real del riesgo.
-Para activarlo:
-1. Creá una cuenta de servicio en Google Cloud con la API de Google Sheets habilitada.
-2. Descargá el JSON de credenciales y guardalo en `config/service_account.json`.
-3. Creá una planilla de Google Sheets nueva (o usá una existente) y compartila con el
-   email de la cuenta de servicio (como Editor).
-4. En el archivo `.env` (raíz del proyecto), seteá:
-   ```
-   STORAGE_BACKEND=gsheets
-   GOOGLE_SHEETS_SPREADSHEET_ID=<el ID de tu planilla>
-   ```
-5. Reiniciá la app. Las pestañas `transactions`, `audit_log` y `portfolio_snapshots` se
-   crean solas la primera vez.
+if st.button("🔄 Releer datos (si editaste la planilla a mano)"):
+    if hasattr(repo, "invalidar_cache"):
+        repo.invalidar_cache()
+    invalidar_caches()
+    st.success("Listo: se vuelven a leer transacciones, instrumentos y precios.")
 
-Si algo de esto falla, la app cae automáticamente a CSV local (nunca se rompe por falta
-de configuración de Google).
-    """
-)
+with st.expander("¿Cómo se configura Google Sheets?"):
+    st.markdown(
+        """
+Por defecto (en local) la app guarda todo en CSV (`/data`). En producción tiene que usar
+**Google Sheets**, porque el disco de Streamlit Cloud se borra en cada reinicio.
+
+1. Creá una cuenta de servicio en Google Cloud con las APIs de Google Sheets y Drive habilitadas.
+2. Compartí tu planilla con el email de la cuenta de servicio (como Editor).
+3. **En Streamlit Cloud** (Settings → Secrets): pegá el contenido de
+   `.streamlit/secrets.toml.example` con tus valores reales (`storage_backend = "gsheets"`,
+   el ID de la planilla y la tabla `[gcp_service_account]`).
+   **En local**: lo mismo en `.streamlit/secrets.toml`, o en `.env` con
+   `STORAGE_BACKEND=gsheets`, `GOOGLE_SHEETS_SPREADSHEET_ID` y el JSON en `config/service_account.json`.
+4. Reiniciá la app. Las 6 pestañas (`instrumentos`, `transactions`, `portfolio_snapshots`,
+   `forecast_log`, `processed_files`, `audit_log`) se crean solas la primera vez.
+
+Si la conexión falla, la app cae a CSV local y lo avisa con un banner rojo arriba de todo.
+        """
+    )
 
 st.divider()
 st.subheader("Ratios de CEDEAR (fuente: Comafi)")
@@ -96,6 +101,9 @@ la terminal (en la raíz del proyecto):
 ```bash
 python scripts/generar_credenciales.py
 ```
+
+El script actualiza `config/credentials.yaml` (local) y te imprime el bloque para pegar en los
+Secrets de Streamlit Cloud.
     """
 )
 
@@ -140,6 +148,10 @@ else:
         except Exception as exc:  # noqa: BLE001
             st.error(f"No se pudo conectar a Google Drive: {exc}")
 
+    drive_mensaje = st.session_state.pop("drive_mensaje", None)
+    if drive_mensaje:
+        getattr(st, drive_mensaje[0])(drive_mensaje[1])
+
     pendientes = st.session_state.get("drive_pendientes", [])
     if pendientes:
         st.write(f"**{len(pendientes)} archivo(s) nuevo(s) encontrado(s):**")
@@ -162,32 +174,52 @@ else:
                     if tipo == "movimientos":
                         ids_existentes = {t.id_externo for t in repo.list_transactions() if t.id_externo}
                         resultado = parsear_movimientos_csv(contenido, ids_externos_existentes=ids_existentes)
-                        st.write(f"{len(resultado.candidatos)} movimiento(s) nuevo(s) para importar.")
                         resumen = importar_candidatos(resultado.candidatos, repo, username, origen=f"Drive: {archivo['name']}")
-                        st.success(f"Importados: {resumen.importados}")
-                        if resumen.pendientes_de_ratio:
-                            st.warning(f"Sin ratio (no importados): {', '.join(resumen.pendientes_de_ratio)}")
-                        repo.add_processed_file(
-                            ProcessedFile(
-                                drive_file_id=archivo["id"], nombre_archivo=archivo["name"],
-                                tipo_detectado=tipo, filas_importadas=resumen.importados,
+                        mensaje = f"**{archivo['name']}**: {resumen.importados} movimiento(s) importado(s)."
+                        if resumen.completo:
+                            # Solo se marca como procesado si NO quedó nada afuera. Antes se
+                            # marcaba siempre, y las filas de CEDEARs sin ratio se perdían para siempre.
+                            repo.add_processed_file(
+                                ProcessedFile(
+                                    drive_file_id=archivo["id"], nombre_archivo=archivo["name"],
+                                    tipo_detectado=tipo, filas_importadas=resumen.importados,
+                                )
                             )
-                        )
+                            st.session_state["drive_mensaje"] = ("success", mensaje)
+                        else:
+                            detalle = []
+                            if resumen.pendientes_de_ratio:
+                                detalle.append(
+                                    f"sin ratio: {', '.join(resumen.pendientes_de_ratio)} — registralos en "
+                                    "📝 Transacciones → Instrumentos (con su ratio) y volvé a traer el archivo"
+                                )
+                            if resumen.errores:
+                                detalle.append("errores: " + "; ".join(resumen.errores))
+                            st.session_state["drive_mensaje"] = (
+                                "warning",
+                                mensaje + " El archivo queda PENDIENTE (" + " · ".join(detalle) + "). "
+                                "Reintentarlo no duplica lo ya importado.",
+                            )
                     elif tipo == "portfolio_report":
-                        st.info(
-                            "Es un reporte de cartera — andá a 📥 Importar Broker → Reconciliar Cartera "
-                            "para compararlo (subilo ahí manualmente; la reconciliación no se automatiza "
-                            "para que siempre la revises vos)."
+                        st.session_state["drive_mensaje"] = (
+                            "info",
+                            f"**{archivo['name']}** es un reporte de cartera — andá a 📥 Importar Broker → "
+                            "Reconciliar Cartera para compararlo (la reconciliación no se automatiza para que "
+                            "siempre la revises vos).",
                         )
                         repo.add_processed_file(
                             ProcessedFile(drive_file_id=archivo["id"], nombre_archivo=archivo["name"], tipo_detectado=tipo)
                         )
                     else:
-                        st.warning("No se pudo identificar el tipo por columnas. Se marca como revisado para no volver a mostrarlo.")
+                        st.session_state["drive_mensaje"] = (
+                            "warning",
+                            f"**{archivo['name']}**: no se pudo identificar el tipo por columnas. Se marca como revisado.",
+                        )
                         repo.add_processed_file(
                             ProcessedFile(drive_file_id=archivo["id"], nombre_archivo=archivo["name"], tipo_detectado=tipo)
                         )
-                    st.cache_data.clear()
+                    st.session_state.pop("drive_pendientes", None)  # forzar a volver a buscar
+                    invalidar_caches()
                     st.rerun()
 
 st.divider()

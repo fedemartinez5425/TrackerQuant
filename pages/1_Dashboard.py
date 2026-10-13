@@ -3,6 +3,7 @@ import json
 import streamlit as st
 
 from app_helpers import (
+    avisar_excluidos,
     formato_moneda,
     formato_pct,
     mostrar_ccl_sidebar,
@@ -40,6 +41,7 @@ if historicos.empty:
 riesgo = calcular_resumen_riesgo(
     historicos, pesos, resumen["valor_actual_total"], settings.DEFAULT_BENCHMARK, settings.STRESS_SCENARIOS
 )
+avisar_excluidos(historicos)
 
 # ==================== Semáforo (banner) ====================
 color_semaforo = p.color_semaforo(riesgo["semaforo"])
@@ -137,9 +139,16 @@ with st.expander("📸 Guardar snapshot de hoy (para analytics histórico)"):
         "puedas analizar — se guarda en tu backend de storage (CSV o Google Sheets)."
     )
     if st.button("Guardar snapshot", type="primary"):
+        from core.data_providers.ccl_provider import get_ccl_automatico
+
         repo = get_repository()
+        ccl = get_ccl_automatico()
+        if not ccl:
+            st.error("No se pudo obtener el CCL para expresar el snapshot en USD. Probá de nuevo en unos minutos.")
+            st.stop()
         snapshot = PortfolioSnapshot(
-            valor_total_usd=resumen["valor_actual_total"],
+            # El campo es en USD: antes se guardaba el valor en PESOS acá.
+            valor_total_usd=resumen["valor_actual_total"] / ccl["valor"],
             cantidad_posiciones=resumen["cantidad_posiciones"],
             volatilidad_anualizada=riesgo["volatilidad_anualizada"],
             var_95_pct=riesgo["var_95_pct"],
@@ -148,4 +157,4 @@ with st.expander("📸 Guardar snapshot de hoy (para analytics histórico)"):
             composicion_json=json.dumps(pesos),
         )
         repo.add_snapshot(snapshot)
-        st.success(f"Snapshot guardado para {snapshot.fecha}.")
+        st.success(f"Snapshot guardado para {snapshot.fecha} (US$ {snapshot.valor_total_usd:,.2f} al CCL {ccl['valor']:,.2f}).")
