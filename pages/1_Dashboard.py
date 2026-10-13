@@ -64,12 +64,18 @@ st.markdown(
 )
 
 # ==================== KPIs ====================
-k1, k2, k3, k4, k5 = st.columns(5)
+k1, k2, k2u, k3, k4, k5 = st.columns(6)
 k1.metric("Valor Total", formato_moneda(resumen["valor_actual_total"]))
 k2.metric(
-    "Ganancia / Pérdida",
+    "G/P en pesos",
     formato_moneda(resumen["ganancia_perdida_total"]),
     delta=formato_pct(resumen["ganancia_perdida_pct_total"]),
+)
+k2u.metric(
+    "G/P en USD-CCL",
+    formato_moneda(resumen["ganancia_perdida_usd_total"], "USD"),
+    delta=formato_pct(resumen["ganancia_perdida_usd_pct_total"]),
+    help="Cada compra al CCL de su fecha vs. valor actual al CCL de hoy.",
 )
 k3.metric("Portfolio VaR (95%, 1 día)", formato_pct(riesgo["var_95_pct"]))
 k4.metric("Expected Shortfall (95%)", formato_pct(riesgo["cvar_95_pct"]))

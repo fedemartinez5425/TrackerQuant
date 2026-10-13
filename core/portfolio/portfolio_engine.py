@@ -18,6 +18,11 @@ Moneda: la cartera se valúa en pesos. Las transacciones cargadas en USD se
 convierten a pesos con el CCL de SU fecha (no el de hoy) antes de sumar al
 costo -- antes se sumaban dólares y pesos como si fueran lo mismo.
 
+G/P en USD-CCL: en paralelo al costo en pesos se lleva el costo en dólares
+(`costo_total_usd`): compras en pesos / CCL de su fecha, compras en USD
+directo. Las ventas descuentan ese costo a costo promedio, igual que en
+pesos. El valor actual en USD es el valor en pesos / CCL de hoy.
+
 Reversos: las transacciones anuladas y sus reversos se excluyen por
 completo (ver core/storage/models.transacciones_efectivas).
 """
@@ -63,6 +68,10 @@ class Position:
     peso: float | None
     ganancia_perdida: float | None
     ganancia_perdida_pct: float | None
+    valor_invertido_usd: float | None = None
+    valor_actual_usd: float | None = None
+    ganancia_perdida_usd: float | None = None
+    ganancia_perdida_usd_pct: float | None = None
 
 
 def _instrumento_o_default(ticker: str, instrumentos_por_ticker: dict[str, Instrumento]) -> Instrumento:
@@ -97,7 +106,11 @@ def calcular_tenencias(
 
     fx_usd_ars: tipo de cambio para convertir transacciones en USD a pesos a
     la fecha de cada una. Si hay transacciones en USD y no se pasa, se arma
-    con el CCL histórico automáticamente."""
+    con el CCL histórico automáticamente.
+
+    `costo_total_usd`: costo en dólares CCL (compras en pesos / CCL de su
+    fecha, compras en USD tal cual). None si no hay tipo de cambio o falta
+    el CCL de alguna compra en pesos -- mejor "sin dato" que un número falso."""
     instrumentos_por_ticker = instrumentos_por_ticker or {}
     efectivas = transacciones_efectivas(transactions)
     if fx_usd_ars is None and any(t.moneda == Currency.USD for t in efectivas):
@@ -105,28 +118,43 @@ def calcular_tenencias(
 
     tenencias: dict[str, dict] = {}
     for t in sorted(efectivas, key=lambda x: (x.fecha, x.creado_en)):
-        d = tenencias.setdefault(t.ticker, {"cantidad": 0.0, "costo_total": 0.0})
+        d = tenencias.setdefault(
+            t.ticker, {"cantidad": 0.0, "costo_total": 0.0, "costo_total_usd": 0.0 if fx_usd_ars else None}
+        )
+        fx = fx_usd_ars(t.fecha) if fx_usd_ars else None
         factor = 1.0
         if t.moneda == Currency.USD:
-            fx = fx_usd_ars(t.fecha) if fx_usd_ars else None
             if fx:
                 factor = fx
             else:
                 logger.warning("Sin CCL para convertir %s (%s, USD): se toma el precio sin convertir.", t.id, t.ticker)
         if t.accion == TransactionAction.COMPRA:
+            monto = t.cantidad * t.precio + t.comision  # en la moneda de la transacción
             d["cantidad"] += t.cantidad
-            d["costo_total"] += (t.cantidad * t.precio + t.comision) * factor
+            d["costo_total"] += monto * factor
+            if d["costo_total_usd"] is not None:
+                if t.moneda == Currency.USD:
+                    d["costo_total_usd"] += monto
+                elif fx:
+                    d["costo_total_usd"] += monto / fx
+                else:
+                    d["costo_total_usd"] = None
         else:  # VENTA: reduce cantidad y costo proporcionalmente (costo promedio)
             if d["cantidad"] > 0:
-                costo_promedio_actual = d["costo_total"] / d["cantidad"]
-                d["costo_total"] -= t.cantidad * costo_promedio_actual
+                proporcion = t.cantidad / d["cantidad"]
+                d["costo_total"] -= d["costo_total"] * proporcion
+                if d["costo_total_usd"] is not None:
+                    d["costo_total_usd"] -= d["costo_total_usd"] * proporcion
             d["cantidad"] -= t.cantidad
 
     return {k: v for k, v in tenencias.items() if v["cantidad"] > 1e-9}
 
 
 def calcular_tenencias_a_fecha(
-    transactions: list[Transaction], fecha_corte, instrumentos_por_ticker: dict[str, Instrumento] | None = None
+    transactions: list[Transaction],
+    fecha_corte,
+    instrumentos_por_ticker: dict[str, Instrumento] | None = None,
+    fx_usd_ars: TipoCambio | None = None,
 ) -> dict[str, dict]:
     """Igual que calcular_tenencias, pero solo considerando movimientos
     hasta una fecha de corte -- permite reconstruir cómo era la cartera
@@ -134,22 +162,31 @@ def calcular_tenencias_a_fecha(
     # Primero se resuelven los reversos sobre el log COMPLETO (un reverso
     # cargado después de la fecha de corte igual anula a la original).
     filtradas = [t for t in transacciones_efectivas(transactions) if t.fecha <= fecha_corte]
-    return calcular_tenencias(filtradas, instrumentos_por_ticker)
+    return calcular_tenencias(filtradas, instrumentos_por_ticker, fx_usd_ars)
 
 
 def construir_cartera(
-    transactions: list[Transaction], instrumentos_por_ticker: dict[str, Instrumento] | None = None
+    transactions: list[Transaction],
+    instrumentos_por_ticker: dict[str, Instrumento] | None = None,
+    fx_usd_ars: TipoCambio | None = None,
 ) -> list[Position]:
+    """fx_usd_ars: CCL por fecha para el G/P en USD; si no se pasa se usa el
+    CCL histórico (cacheado en memoria por el data provider)."""
     instrumentos_por_ticker = instrumentos_por_ticker or {}
-    tenencias = calcular_tenencias(transactions, instrumentos_por_ticker)
+    fx_usd_ars = fx_usd_ars or tipo_cambio_ccl_historico()
+    tenencias = calcular_tenencias(transactions, instrumentos_por_ticker, fx_usd_ars)
     return _tenencias_a_posiciones(tenencias, instrumentos_por_ticker)
 
 
 def construir_cartera_a_fecha(
-    transactions: list[Transaction], fecha_corte, instrumentos_por_ticker: dict[str, Instrumento] | None = None
+    transactions: list[Transaction],
+    fecha_corte,
+    instrumentos_por_ticker: dict[str, Instrumento] | None = None,
+    fx_usd_ars: TipoCambio | None = None,
 ) -> list[Position]:
     instrumentos_por_ticker = instrumentos_por_ticker or {}
-    tenencias = calcular_tenencias_a_fecha(transactions, fecha_corte, instrumentos_por_ticker)
+    fx_usd_ars = fx_usd_ars or tipo_cambio_ccl_historico()
+    tenencias = calcular_tenencias_a_fecha(transactions, fecha_corte, instrumentos_por_ticker, fx_usd_ars)
     return _tenencias_a_posiciones(tenencias, instrumentos_por_ticker)
 
 
@@ -192,11 +229,13 @@ def _tenencias_a_posiciones(tenencias: dict[str, dict], instrumentos_por_ticker:
                 "cantidad": cantidad,
                 "costo_promedio": costo_promedio,
                 "valor_invertido": d["costo_total"],
+                "valor_invertido_usd": d.get("costo_total_usd"),
                 "precio_bcba": precio_bcba,
                 "precio_teorico": precio_teorico,
                 "precio_final": precio_final,
                 "prima_descuento": prima_descuento,
                 "valor_actual": valor_actual,
+                "valor_actual_usd": (valor_actual / ccl_valor) if (valor_actual is not None and ccl_valor) else None,
             }
         )
 
@@ -205,7 +244,18 @@ def _tenencias_a_posiciones(tenencias: dict[str, dict], instrumentos_por_ticker:
         peso = (p["valor_actual"] / valor_total) if (p["valor_actual"] and valor_total) else None
         gp = (p["valor_actual"] - p["valor_invertido"]) if p["valor_actual"] is not None else None
         gp_pct = (gp / p["valor_invertido"]) if (gp is not None and p["valor_invertido"]) else None
-        posiciones.append(Position(peso=peso, ganancia_perdida=gp, ganancia_perdida_pct=gp_pct, **p))
+        gp_usd = (
+            p["valor_actual_usd"] - p["valor_invertido_usd"]
+            if (p["valor_actual_usd"] is not None and p["valor_invertido_usd"] is not None)
+            else None
+        )
+        gp_usd_pct = (gp_usd / p["valor_invertido_usd"]) if (gp_usd is not None and p["valor_invertido_usd"]) else None
+        posiciones.append(
+            Position(
+                peso=peso, ganancia_perdida=gp, ganancia_perdida_pct=gp_pct,
+                ganancia_perdida_usd=gp_usd, ganancia_perdida_usd_pct=gp_usd_pct, **p,
+            )
+        )
     return sorted(posiciones, key=lambda x: (x.valor_actual or 0), reverse=True)
 
 
@@ -214,6 +264,7 @@ def cartera_a_dataframe(posiciones: list[Position]) -> pd.DataFrame:
         "Ticker", "Tipo", "Cantidad", "Costo Promedio", "Precio BCBA", "Precio Teórico (CCL)",
         "Precio Final", "Prima/Desc. %", "Valor Actual", "Valor Invertido",
         "Peso %", "G/P $", "G/P %",
+        "Invertido US$", "Valor Actual US$", "G/P US$", "G/P US$ %",
     ]
     if not posiciones:
         return pd.DataFrame(columns=columnas)
@@ -232,6 +283,10 @@ def cartera_a_dataframe(posiciones: list[Position]) -> pd.DataFrame:
             "Peso %": p.peso,
             "G/P $": p.ganancia_perdida,
             "G/P %": p.ganancia_perdida_pct,
+            "Invertido US$": p.valor_invertido_usd,
+            "Valor Actual US$": p.valor_actual_usd,
+            "G/P US$": p.ganancia_perdida_usd,
+            "G/P US$ %": p.ganancia_perdida_usd_pct,
         }
         for p in posiciones
     ]
@@ -243,10 +298,27 @@ def resumen_cartera(posiciones: list[Position]) -> dict:
     valor_invertido_total = sum(p.valor_invertido for p in posiciones)
     gp_total = valor_actual_total - valor_invertido_total
     gp_pct_total = (gp_total / valor_invertido_total) if valor_invertido_total else None
+
+    # USD: solo si TODAS las posiciones tienen dato -- un total parcial
+    # mezclaría posiciones y daría un % engañoso.
+    invertido_usd = [p.valor_invertido_usd for p in posiciones]
+    actual_usd = [p.valor_actual_usd for p in posiciones]
+    if posiciones and None not in invertido_usd and None not in actual_usd:
+        invertido_usd_total = sum(invertido_usd)
+        actual_usd_total = sum(actual_usd)
+        gp_usd_total = actual_usd_total - invertido_usd_total
+        gp_usd_pct_total = (gp_usd_total / invertido_usd_total) if invertido_usd_total else None
+    else:
+        invertido_usd_total = actual_usd_total = gp_usd_total = gp_usd_pct_total = None
+
     return {
         "valor_actual_total": valor_actual_total,
         "valor_invertido_total": valor_invertido_total,
         "ganancia_perdida_total": gp_total,
         "ganancia_perdida_pct_total": gp_pct_total,
         "cantidad_posiciones": len(posiciones),
+        "valor_invertido_usd_total": invertido_usd_total,
+        "valor_actual_usd_total": actual_usd_total,
+        "ganancia_perdida_usd_total": gp_usd_total,
+        "ganancia_perdida_usd_pct_total": gp_usd_pct_total,
     }
