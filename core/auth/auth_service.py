@@ -10,10 +10,10 @@ Dos fuentes de configuración posibles (en este orden de prioridad):
 
 Usa streamlit-authenticator, que maneja cookies de sesión y logout.
 
-Seguridad (fail-closed): si la app corre con configuración de producción
-(st.secrets con storage/cuenta de servicio, es decir, Streamlit Cloud) pero
-faltan las credenciales de usuarios en los Secrets, NO se crea el usuario
-por defecto admin/cambiar123: la app se niega a arrancar. Antes caía al
+Seguridad (fail-closed): si la app corre en Streamlit Cloud y no hay
+usuarios propios (ni en los Secrets ni en un credentials.yaml con clave
+cambiada), NO se usa el usuario por defecto admin/cambiar123: la app se
+niega a arrancar. En tu PC el usuario por defecto sigue funcionando. Antes caía al
 usuario por defecto y además mostraba la clave en la pantalla de login, en
 una URL pública.
 """
@@ -28,7 +28,7 @@ import yaml
 from yaml.loader import SafeLoader
 
 from config.settings import settings
-from core.cloud_secrets import get_secret, secrets_disponibles
+from core.cloud_secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -84,13 +84,19 @@ def _a_dict(nodo):
 
 
 def _config_de_produccion() -> bool:
-    """True si hay Secrets que indican un deploy real (Streamlit Cloud)."""
-    if not secrets_disponibles():
-        return False
-    return (
-        str(get_secret(["storage_backend"], "")).strip().lower() == "gsheets"
-        or get_secret(["gcp_service_account"]) is not None
-    )
+    """True si la app corre en un deploy público (Streamlit Community Cloud).
+
+    Streamlit Cloud clona el repo en /mount/src/<repo> y el contenedor se llama
+    "streamlit". También se puede forzar con la variable de entorno
+    TRACKER_ENTORNO=produccion. En tu PC esto da False, así que el usuario por
+    defecto sigue funcionando para desarrollo local."""
+    import os
+    from pathlib import Path
+
+    if os.getenv("TRACKER_ENTORNO", "").strip().lower() in ("produccion", "producción", "prod"):
+        return True
+    en_mount_src = str(Path(__file__).resolve()).startswith("/mount/src/")
+    return en_mount_src or os.getenv("HOSTNAME", "") == "streamlit"
 
 
 def _cargar_o_crear_config_local() -> dict:
@@ -131,16 +137,28 @@ def _clave_default_sigue_activa(config: dict) -> bool:
 
 
 def _cargar_config() -> dict:
+    """Prioridad: usuarios en st.secrets > config/credentials.yaml local.
+
+    Lo único que se bloquea es usar la clave POR DEFECTO (admin/cambiar123)
+    cuando hay configuración de producción: un credentials.yaml con usuarios
+    propios (generado con scripts/generar_credenciales.py) se acepta siempre."""
     config = _cargar_desde_secrets()
     if config:
         return config
+
     if _config_de_produccion():
-        st.error(
-            "🔒 Faltan las credenciales de usuarios en los Secrets de la app "
-            "(`[credentials.usernames.<usuario>]` y `[cookie]`, ver `.streamlit/secrets.toml.example`). "
-            "Por seguridad, la app no arranca con el usuario por defecto en un deploy público."
-        )
-        st.stop()
+        path = settings.AUTH_CREDENTIALS_FILE
+        config_local = _cargar_o_crear_config_local() if path.exists() else None
+        if config_local is None or _clave_default_sigue_activa(config_local):
+            st.error(
+                "🔒 No hay usuarios configurados (o el usuario `admin` todavía tiene la clave por defecto). "
+                "Agregá `[credentials.usernames.<usuario>]` en los Secrets de la app (ver "
+                "`.streamlit/secrets.toml.example`) o, en local, corré `python scripts/generar_credenciales.py`. "
+                "Por seguridad, la app no arranca con la clave por defecto en un deploy público."
+            )
+            st.stop()
+        return config_local
+
     return _cargar_o_crear_config_local()
 
 

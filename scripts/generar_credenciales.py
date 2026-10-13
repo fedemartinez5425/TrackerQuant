@@ -4,6 +4,8 @@ Uso:
 
 Te pregunta usuario, nombre, email y contraseña, y actualiza (o crea)
 config/credentials.yaml con la contraseña ya hasheada con bcrypt.
+Además imprime el bloque listo para pegar en los Secrets de Streamlit Cloud
+(usuario + cookie con una clave aleatoria nueva).
 Ejecutalo desde la raíz del proyecto.
 """
 import getpass
@@ -56,8 +58,21 @@ def main():
 
     print(f"\nUsuario '{username}' guardado en {path}")
     print(
-        "\nPara Streamlit Cloud, pegá esto en Settings -> Secrets:\n"
-        f"[credentials.usernames.{username}]\nname = \"{nombre}\"\nemail = \"{email}\"\npassword = \"{hashed}\"\n"
+        "\n" + "=" * 70 + "\n"
+        "Para Streamlit Cloud: copiá TODO lo que está entre las líneas y pegalo\n"
+        "al FINAL de Settings -> Secrets de tu app (después de lo que ya tenés).\n"
+        "Si ya tenés una sección [cookie], no la dupliques: pegá solo [credentials...].\n"
+        + "=" * 70 + "\n"
+        f"[credentials.usernames.{username}]\n"
+        f"name = \"{nombre}\"\n"
+        f"email = \"{email}\"\n"
+        f"password = \"{hashed}\"\n"
+        "\n"
+        "[cookie]\n"
+        "name = \"tracker_riesgo_auth\"\n"
+        f"key = \"{secrets.token_hex(32)}\"\n"
+        "expiry_days = 30\n"
+        + "=" * 70
     )
 
 
