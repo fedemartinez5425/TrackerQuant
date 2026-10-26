@@ -27,6 +27,7 @@ class Settings:
     INSTRUMENTOS_FILE: Path = DATA_DIR / "instrumentos.csv"
     PROCESSED_FILES_FILE: Path = DATA_DIR / "processed_files.csv"
     FORECASTS_FILE: Path = DATA_DIR / "forecast_log.csv"
+    WATCHLIST_FILE: Path = DATA_DIR / "watchlist.csv"
     # Cache del listado de ratios de Comafi. Si no existe (ej. en Streamlit
     # Cloud tras un reinicio), se vuelve a bajar solo la primera vez que se necesita.
     CEDEAR_RATIOS_FILE: Path = DATA_DIR / "cedear_ratios.csv"

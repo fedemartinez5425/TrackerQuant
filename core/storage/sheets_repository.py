@@ -2,12 +2,13 @@
 Backend de storage principal para producción: Google Sheets vía gspread +
 service account. Mismo contrato (BaseRepository) que CsvRepository.
 
-Diseño relacional (5 pestañas = 5 tablas):
+Diseño relacional (una pestaña por tabla):
 - instrumentos: dimensión (ticker, tipo, ADR, ratio) -- 1 fila por ticker
 - transactions: hechos, append-only, referencia ticker
 - portfolio_snapshots: hechos, append-only, para analytics histórico
 - processed_files: registro de qué archivos de Drive ya se importaron
 - audit_log: quién hizo qué y cuándo
+- watchlist: candidatos fuera de cartera (1 fila por ticker)
 
 Credenciales: en local, un archivo JSON de service account
 (GOOGLE_SERVICE_ACCOUNT_FILE). En Streamlit Cloud, el mismo JSON pero
@@ -34,6 +35,7 @@ from core.storage.csv_repository import (
     PROCESSED_FILE_FIELDS,
     SNAPSHOT_FIELDS,
     TRANSACTION_FIELDS,
+    WATCHLIST_FIELDS,
 )
 from core.storage.models import (
     AuditEvent,
@@ -42,6 +44,7 @@ from core.storage.models import (
     PortfolioSnapshot,
     ProcessedFile,
     Transaction,
+    WatchlistItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +55,7 @@ SHEET_AUDIT = "audit_log"
 SHEET_SNAPSHOTS = "portfolio_snapshots"
 SHEET_FORECASTS = "forecast_log"
 SHEET_PROCESSED_FILES = "processed_files"
+SHEET_WATCHLIST = "watchlist"
 
 CACHE_TTL_SEGUNDOS = 60
 
@@ -83,6 +87,7 @@ class SheetsRepository(BaseRepository):
             (SHEET_SNAPSHOTS, SNAPSHOT_FIELDS),
             (SHEET_FORECASTS, FORECAST_FIELDS),
             (SHEET_PROCESSED_FILES, PROCESSED_FILE_FIELDS),
+            (SHEET_WATCHLIST, WATCHLIST_FIELDS),
         ):
             ws = existentes.get(titulo)
             if ws is None:
@@ -193,6 +198,38 @@ class SheetsRepository(BaseRepository):
 
     def list_processed_file_ids(self) -> set[str]:
         return {d["drive_file_id"] for d in self._dicts(SHEET_PROCESSED_FILES, "drive_file_id")}
+
+    # ---------------- Watchlist ----------------
+    def _fila_watchlist(self, ticker: str) -> int | None:
+        """Número de fila (1-indexed, en la planilla) del ticker, leyendo fresco."""
+        self._invalidar(SHEET_WATCHLIST)
+        headers, rows = self._all_rows(SHEET_WATCHLIST)
+        for i, r in enumerate(rows, start=2):
+            if self._row_to_dict(headers, r).get("ticker") == ticker:
+                return i
+        return None
+
+    def upsert_watchlist_item(self, item: WatchlistItem) -> None:
+        from gspread.utils import rowcol_to_a1
+
+        fila = self._fila_watchlist(item.ticker)
+        if fila is None:
+            self._append(SHEET_WATCHLIST, WATCHLIST_FIELDS, [item.to_row()])
+            return
+        rango = f"A{fila}:{rowcol_to_a1(fila, len(WATCHLIST_FIELDS))}"
+        self._worksheet(SHEET_WATCHLIST).update(range_name=rango, values=[_celdas(item.to_row(), WATCHLIST_FIELDS)])
+        self._invalidar(SHEET_WATCHLIST)
+
+    def list_watchlist(self) -> list[WatchlistItem]:
+        return [WatchlistItem.from_row(d) for d in self._dicts(SHEET_WATCHLIST, "ticker")]
+
+    def remove_watchlist_item(self, ticker: str) -> bool:
+        fila = self._fila_watchlist(ticker.upper().strip())
+        if fila is None:
+            return False
+        self._worksheet(SHEET_WATCHLIST).delete_rows(fila)
+        self._invalidar(SHEET_WATCHLIST)
+        return True
 
     # ---------------- Auditoría ----------------
     def add_audit_event(self, event: AuditEvent) -> None:

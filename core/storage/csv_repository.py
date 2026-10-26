@@ -25,6 +25,7 @@ from core.storage.models import (
     PortfolioSnapshot,
     ProcessedFile,
     Transaction,
+    WatchlistItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ SNAPSHOT_FIELDS = [
 ]
 FORECAST_FIELDS = ["id", "fecha", "horizonte_dias", "vol_pronosticada_anual", "metodo", "composicion_json", "creado_en"]
 PROCESSED_FILE_FIELDS = ["id", "drive_file_id", "nombre_archivo", "tipo_detectado", "filas_importadas", "procesado_en"]
+WATCHLIST_FIELDS = ["ticker", "tipo_instrumento", "ticker_usd", "ratio_cedear", "notas", "agregado_en"]
 
 
 def _ensure_file(path: Path, fields: list[str]) -> None:
@@ -59,6 +61,7 @@ class CsvRepository(BaseRepository):
         instrumentos_file: Path,
         processed_files_file: Path,
         forecasts_file: Path,
+        watchlist_file: Path | None = None,
     ):
         self.transactions_file = transactions_file
         self.audit_file = audit_file
@@ -66,12 +69,14 @@ class CsvRepository(BaseRepository):
         self.instrumentos_file = instrumentos_file
         self.processed_files_file = processed_files_file
         self.forecasts_file = forecasts_file
+        self.watchlist_file = watchlist_file or transactions_file.parent / "watchlist.csv"
         _ensure_file(self.transactions_file, TRANSACTION_FIELDS)
         _ensure_file(self.audit_file, AUDIT_FIELDS)
         _ensure_file(self.snapshots_file, SNAPSHOT_FIELDS)
         _ensure_file(self.instrumentos_file, INSTRUMENTO_FIELDS)
         _ensure_file(self.processed_files_file, PROCESSED_FILE_FIELDS)
         _ensure_file(self.forecasts_file, FORECAST_FIELDS)
+        _ensure_file(self.watchlist_file, WATCHLIST_FIELDS)
 
     # ---------------- helpers ----------------
     @staticmethod
@@ -150,6 +155,30 @@ class CsvRepository(BaseRepository):
 
     def list_processed_file_ids(self) -> set[str]:
         return {r["drive_file_id"] for r in self._leer(self.processed_files_file, "drive_file_id")}
+
+    # ---------------- Watchlist ----------------
+    def _escribir_watchlist(self, items: list[WatchlistItem]) -> None:
+        with self.watchlist_file.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=WATCHLIST_FIELDS)
+            writer.writeheader()
+            for item in items:
+                writer.writerow(item.to_row())
+
+    def upsert_watchlist_item(self, item: WatchlistItem) -> None:
+        items = [i for i in self.list_watchlist() if i.ticker != item.ticker]
+        self._escribir_watchlist(items + [item])
+
+    def list_watchlist(self) -> list[WatchlistItem]:
+        return [WatchlistItem.from_row(r) for r in self._leer(self.watchlist_file, "ticker")]
+
+    def remove_watchlist_item(self, ticker: str) -> bool:
+        ticker = ticker.upper().strip()
+        items = self.list_watchlist()
+        quedan = [i for i in items if i.ticker != ticker]
+        if len(quedan) == len(items):
+            return False
+        self._escribir_watchlist(quedan)
+        return True
 
     # ---------------- Auditoría ----------------
     def add_audit_event(self, event: AuditEvent) -> None:

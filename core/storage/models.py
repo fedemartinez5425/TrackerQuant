@@ -96,6 +96,58 @@ class Instrumento(BaseModel):
         )
 
 
+class WatchlistItem(BaseModel):
+    """Candidato que todavía no está en cartera (pestaña `watchlist`).
+    Es independiente de `instrumentos`: si el ticker se compra, se da de
+    alta ahí como siempre. El ratio es opcional (si falta, se busca en Comafi)."""
+
+    ticker: str  # PK -- ticker BCBA
+    tipo_instrumento: TipoInstrumento = TipoInstrumento.CEDEAR
+    ticker_usd: Optional[str] = None
+    ratio_cedear: Optional[float] = None
+    notas: str = ""
+    agregado_en: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("ticker", "ticker_usd")
+    @classmethod
+    def ticker_uppercase(cls, v):
+        return v.upper().strip() if v else v
+
+    @field_validator("ratio_cedear")
+    @classmethod
+    def ratio_positivo(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("El ratio CEDEAR debe ser mayor a 0")
+        return v
+
+    @model_validator(mode="after")
+    def validar_consistencia(self):
+        if self.tipo_instrumento == TipoInstrumento.CEDEAR:
+            if not self.ticker_usd:
+                raise ValueError("Un CEDEAR necesita el ticker_usd (ADR en EEUU).")
+        elif self.ratio_cedear:
+            raise ValueError("Una acción argentina directa no debería tener ratio_cedear.")
+        return self
+
+    def to_row(self) -> dict:
+        d = self.model_dump()
+        d["tipo_instrumento"] = self.tipo_instrumento.value
+        d["agregado_en"] = self.agregado_en.isoformat()
+        return d
+
+    @classmethod
+    def from_row(cls, d: dict) -> "WatchlistItem":
+        agregado = d.get("agregado_en")
+        return cls(
+            ticker=d["ticker"],
+            tipo_instrumento=TipoInstrumento(d.get("tipo_instrumento") or "CEDEAR"),
+            ticker_usd=d.get("ticker_usd") or None,
+            ratio_cedear=_opt_float(d.get("ratio_cedear")),
+            notas=d.get("notas") or "",
+            agregado_en=datetime.fromisoformat(agregado) if agregado else datetime.now(timezone.utc),
+        )
+
+
 class Transaction(BaseModel):
     """Un movimiento de cartera (tabla de hechos, append-only): nunca se
     edita, se reversa. Solo referencia el ticker -- su tipo/ratio/ADR

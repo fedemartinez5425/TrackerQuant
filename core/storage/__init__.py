@@ -72,6 +72,7 @@ def get_repository() -> BaseRepository:
         instrumentos_file=settings.INSTRUMENTOS_FILE,
         processed_files_file=settings.PROCESSED_FILES_FILE,
         forecasts_file=settings.FORECASTS_FILE,
+        watchlist_file=settings.WATCHLIST_FILE,
     )
     logger.info("Storage backend: CSV local (%s)", settings.DATA_DIR)
     return _repository

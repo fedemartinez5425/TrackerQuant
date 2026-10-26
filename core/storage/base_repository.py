@@ -20,6 +20,7 @@ from core.storage.models import (
     ProcessedFile,
     Transaction,
     TransactionAction,
+    WatchlistItem,
     ids_reversados,
 )
 
@@ -101,6 +102,17 @@ class BaseRepository(ABC):
 
     @abstractmethod
     def list_processed_file_ids(self) -> set[str]: ...
+
+    # --- Watchlist (candidatos fuera de cartera) ---
+    @abstractmethod
+    def upsert_watchlist_item(self, item: WatchlistItem) -> None: ...
+
+    @abstractmethod
+    def list_watchlist(self) -> list[WatchlistItem]: ...
+
+    @abstractmethod
+    def remove_watchlist_item(self, ticker: str) -> bool:
+        """Saca el ticker de la watchlist. True si existía."""
 
     # --- Auditoría ---
     @abstractmethod
