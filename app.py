@@ -53,6 +53,7 @@ paginas = [
     st.Page("pages/5_Riesgo.py", title="Riesgo", icon="⚠️"),
     st.Page("pages/10_Forecasting.py", title="Forecasting", icon="🔮"),
     st.Page("pages/6_Escenarios.py", title="Escenarios", icon="🕰️"),
+    st.Page("pages/11_Candidatos.py", title="Candidatos", icon="🎯"),
     st.Page("pages/7_Importar_Broker.py", title="Importar Broker", icon="📥"),
     st.Page("pages/8_Configuracion.py", title="Configuración", icon="⚙️"),
 ]

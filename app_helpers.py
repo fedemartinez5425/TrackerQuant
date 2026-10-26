@@ -10,10 +10,15 @@ import streamlit as st
 import app_style
 from config.settings import settings
 from core import data_providers
-from core.portfolio.historicos import alinear_dias_comunes, desde_posiciones, historicos_usd_equivalente
+from core.portfolio.historicos import (
+    InstrumentoRiesgo,
+    alinear_dias_comunes,
+    desde_posiciones,
+    historicos_usd_equivalente,
+)
 from core.portfolio.portfolio_engine import construir_cartera
 from core.storage import get_repository
-from core.storage.models import Instrumento, Transaction
+from core.storage.models import Instrumento, TipoInstrumento, Transaction, WatchlistItem
 
 
 def require_login() -> str:
@@ -98,6 +103,40 @@ def obtener_historicos_riesgo(posiciones, period: str | None = None) -> pd.DataF
         return alinear_dias_comunes(historicos_posiciones)
     combinado = pd.concat([historicos_posiciones, historico_benchmark], axis=1)
     return alinear_dias_comunes(combinado)
+
+
+def obtener_watchlist() -> list[WatchlistItem]:
+    return get_repository().list_watchlist()
+
+
+def obtener_historicos_decision(posiciones, watchlist: list[WatchlistItem]) -> pd.DataFrame:
+    """Históricos en USD equivalente de tenencias + watchlist con
+    HISTORY_PERIOD_DECISION. SIN alinear: cada candidato se cruza con la
+    cartera en sus propios días comunes (ver core/decision/candidatos.py)."""
+    # Por ticker: si un candidato ya está en cartera, manda la definición de la tenencia.
+    instrumentos = {i.ticker: InstrumentoRiesgo(i.ticker, i.tipo_instrumento, i.ticker_usd) for i in watchlist}
+    instrumentos.update({i.ticker: i for i in desde_posiciones(posiciones)})
+    if not instrumentos:
+        return pd.DataFrame()
+    return _cached_historicos_usd(tuple(sorted(instrumentos.values())), settings.HISTORY_PERIOD_DECISION)
+
+
+@st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, show_spinner=False)
+def _cached_precio_unidad(ticker: str, tipo: str, ticker_usd: str | None, ratio: float | None, ccl: float | None):
+    from core.decision.candidatos import precio_unidad_ars
+
+    item = WatchlistItem.model_construct(
+        ticker=ticker, tipo_instrumento=TipoInstrumento(tipo), ticker_usd=ticker_usd, ratio_cedear=ratio
+    )
+    return precio_unidad_ars(item, ccl=ccl)
+
+
+def obtener_precio_unidad(item: WatchlistItem) -> float | None:
+    """Precio de 1 unidad en ARS (cacheado), con el CCL automático de hoy."""
+    ccl = _cached_ccl()
+    return _cached_precio_unidad(
+        item.ticker, item.tipo_instrumento.value, item.ticker_usd, item.ratio_cedear, ccl["valor"] if ccl else None
+    )
 
 
 def avisar_excluidos(historicos: pd.DataFrame) -> None:
