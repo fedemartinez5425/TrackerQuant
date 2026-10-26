@@ -51,6 +51,10 @@ class Settings:
     ALPHA_VANTAGE_API_KEY: str = os.getenv("ALPHA_VANTAGE_API_KEY", "")
     DEFAULT_BENCHMARK: str = os.getenv("DEFAULT_BENCHMARK", "SPY")
     HISTORY_PERIOD: str = os.getenv("HISTORY_PERIOD", "2y")
+    # Ventana más larga para la capa de decisión (métricas a 1 y 3 años, candidatos).
+    HISTORY_PERIOD_DECISION: str = os.getenv("HISTORY_PERIOD_DECISION", "3y")
+    # Tasa libre de riesgo anual en USD (Sharpe / Sortino).
+    RISK_FREE_RATE: float = float(os.getenv("RISK_FREE_RATE", "0.04"))
     PRICE_CACHE_TTL_SECONDS: int = int(os.getenv("PRICE_CACHE_TTL_SECONDS", "900"))  # 15 min
 
     # --- CCL automático (vía CEDEAR líquido / su ADR, ver ccl_provider.py) ---
