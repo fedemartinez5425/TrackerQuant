@@ -34,29 +34,72 @@ tab_movimiento, tab_instrumentos = st.tabs(["📝 Nueva Transacción", "🏷️ 
 
 # ==================== TAB 1: NUEVA TRANSACCIÓN ====================
 with tab_movimiento:
-    ticker_input = st.text_input("Ticker (BCBA)", "").upper().strip()
+    with st.expander("❓ ¿Cómo cargo una compra? (leelo la primera vez)"):
+        st.markdown(
+            """
+1. **Ticker**: el código con el que figura en tu broker (ej: `NU`, `AAPL`, `GGAL`, `YPFD`).
+2. Si es la primera vez que cargás ese ticker, la app te pide **definirlo una sola vez**
+   (si es acción argentina o CEDEAR, y su ratio). Después no te lo vuelve a pedir.
+3. Cargá la operación: **fecha**, **cantidad** (cuántos papeles compraste o vendiste),
+   **precio por unidad** y **comisión**.
+
+**Ejemplo:** compraste 2 CEDEARs de Nubank a $ 9.500 cada uno y pagaste $ 120 de comisión →
+Ticker `NU` · CEDEAR · ticker en EEUU `NU` · ratio `2` · Cantidad `2` · Precio `9500` · Comisión `120`.
+
+¿Te equivocaste? No se edita ni se borra: más abajo está **Reversar una transacción**.
+"""
+        )
+    ticker_input = st.text_input(
+        "Ticker (como figura en tu broker)", "", placeholder="NU, AAPL, GGAL...",
+        help="El código en BYMA / tu broker. Para la mayoría de los CEDEARs es el mismo que en EEUU (NU, AAPL, MELI).",
+    ).upper().strip()
     instrumento_existente = instrumentos.get(ticker_input) if ticker_input else None
 
     if ticker_input and not instrumento_existente:
-        st.warning(f"'{ticker_input}' todavía no está registrado en Instrumentos. Definilo primero (una sola vez):")
+        st.warning(f"'{ticker_input}' es nuevo. Definilo una sola vez y después cargás la operación.")
+        ratio_comafi = obtener_ratio(ticker_input, settings.CEDEAR_RATIOS_FILE)
+        # El tipo va FUERA del form: dentro de un st.form cambiarlo no recalcula la página,
+        # y el ratio de Comafi y el ADR no se autocompletaban.
+        tipo_nuevo = st.radio(
+            "¿Qué es?", [TipoInstrumento.ACCION_ARG.value, TipoInstrumento.CEDEAR.value],
+            format_func=lambda v: "🇦🇷 Acción argentina" if v == "ACCION_ARG" else "🌎 CEDEAR",
+            index=1 if ratio_comafi else 0,
+            horizontal=True,
+            help="Acción argentina: empresa local (GGAL, YPFD, PAMP). "
+            "CEDEAR: acción de afuera que comprás en pesos en BYMA (NU, AAPL, MELI).",
+        )
+        es_cedear = tipo_nuevo == TipoInstrumento.CEDEAR.value
+        if es_cedear:
+            if ratio_comafi:
+                st.caption(f"✅ Según Comafi: **{ratio_comafi:g} CEDEARs = 1 acción** de {ticker_input}. Ya quedó completado abajo.")
+            else:
+                st.caption(
+                    f"⚠️ No encontré {ticker_input} en el listado de Comafi. Buscá el ratio en tu broker "
+                    "o en comafi.com.ar (CEDEARs) y cargalo a mano."
+                )
         with st.form("registrar_instrumento_inline"):
-            col1, col2 = st.columns(2)
-            with col1:
-                tipo_nuevo = st.radio(
-                    "Tipo", [TipoInstrumento.ACCION_ARG.value, TipoInstrumento.CEDEAR.value],
-                    format_func=lambda v: "🇦🇷 Acción Argentina" if v == "ACCION_ARG" else "🌎 CEDEAR",
-                    horizontal=True,
-                )
-            with col2:
-                ratio_sugerido = obtener_ratio(ticker_input, settings.CEDEAR_RATIOS_FILE) if tipo_nuevo == "CEDEAR" else None
-                ticker_usd_nuevo = st.text_input("Ticker ADR (EEUU)", value=ticker_input if tipo_nuevo == "CEDEAR" else "")
-                ratio_nuevo = st.number_input(
-                    "Ratio CEDEAR (X:1)", min_value=0.0, step=1.0, value=float(ratio_sugerido or 0)
-                )
-            nombre_nuevo = st.text_input("Nombre descriptivo (opcional)", "")
+            if es_cedear:
+                col1, col2 = st.columns(2)
+                with col1:
+                    ticker_usd_nuevo = st.text_input(
+                        "Ticker en EEUU (ADR)", value=ticker_input,
+                        help="Cómo cotiza la acción en Wall Street. Casi siempre es igual al de BYMA "
+                        "(NU → NU). Excepción típica: BRKB → BRK-B. Se usa para traer precios en dólares.",
+                    )
+                with col2:
+                    ratio_nuevo = st.number_input(
+                        "Ratio: cuántos CEDEARs = 1 acción", min_value=0.0, step=1.0, value=float(ratio_comafi or 0),
+                        help="Si el ratio es 2:1 (2 CEDEARs = 1 acción), poné 2. Solo el número de la izquierda.",
+                    )
+            else:
+                ticker_usd_nuevo, ratio_nuevo = "", 0.0
+                st.caption("Para una acción argentina no hace falta nada más: el precio sale de BYMA en pesos.")
+            nombre_nuevo = st.text_input("Nombre (opcional, para reconocerlo)", "", placeholder="Nubank")
             registrar = st.form_submit_button("✅ Registrar instrumento", type="primary")
 
-        if registrar:
+        if registrar and es_cedear and not ratio_nuevo:
+            st.error("Falta el ratio del CEDEAR. Si es 2:1, poné 2.")
+        elif registrar:
             try:
                 inst = Instrumento(
                     ticker=ticker_input,
@@ -82,19 +125,40 @@ with tab_movimiento:
             + (f" (ADR: {instrumento_existente.ticker_usd}, ratio {instrumento_existente.ratio_cedear:g}:1)" if instrumento_existente.ticker_usd else "")
         )
 
+        unidad = "CEDEARs" if instrumento_existente.tipo_instrumento == TipoInstrumento.CEDEAR else "acciones"
+        st.caption(
+            f"**Cantidad** = cuántos {unidad} compraste o vendiste. **Precio** = lo que pagaste por "
+            "cada uno, sin la comisión. **Comisión** = el total que te cobró el broker por la operación."
+        )
         with st.form("nueva_transaccion", clear_on_submit=True):
             col1, col2, col3 = st.columns(3)
             with col1:
                 fecha = st.date_input("Fecha", value=date.today(), max_value=date.today())
                 accion = st.selectbox("Acción", [TransactionAction.COMPRA.value, TransactionAction.VENTA.value])
             with col2:
-                cantidad = st.number_input("Cantidad", min_value=0.0, step=1.0, format="%.4f")
-                precio = st.number_input("Precio (en BCBA, $ ARS)", min_value=0.0, step=0.01, format="%.2f")
+                cantidad = st.number_input(
+                    f"Cantidad de {unidad}", min_value=0.0, step=1.0, format="%.4f",
+                    help=f"Ej: compraste 2 {unidad} → 2. No conviertas nada: el ratio ya lo sabe la app.",
+                )
+                precio = st.number_input(
+                    "Precio por unidad", min_value=0.0, step=0.01, format="%.2f",
+                    help="El precio de UN papel, en la moneda de al lado. Lo ves en el comprobante del broker.",
+                )
             with col3:
-                moneda = st.selectbox("Moneda", [Currency.ARS.value, Currency.USD.value])
-                comision = st.number_input("Comisión", min_value=0.0, step=0.01, format="%.2f", value=0.0)
+                moneda = st.selectbox(
+                    "Moneda", [Currency.ARS.value, Currency.USD.value],
+                    help="ARS si pagaste en pesos (lo normal). USD si la compraste en dólares: "
+                    "se pasa a pesos con el CCL de esa fecha.",
+                )
+                comision = st.number_input(
+                    "Comisión total", min_value=0.0, step=0.01, format="%.2f", value=0.0,
+                    help="Todo lo que te cobró el broker (comisión + derechos + IVA), en la misma moneda. Si no sabés, dejá 0.",
+                )
 
-            forzar = st.checkbox("Forzar carga (ignorar aviso de posible duplicado)", value=False)
+            forzar = st.checkbox(
+                "Forzar carga (ignorar aviso de posible duplicado)", value=False,
+                help="Solo si la app te avisó que parece repetida y de verdad hiciste dos operaciones iguales.",
+            )
             notas = st.text_area("Notas (opcional)", "")
             enviado = st.form_submit_button("Validar y cargar transacción", type="primary")
 
@@ -222,7 +286,11 @@ with tab_instrumentos:
                 )
             with col2:
                 ticker_usd_edit = st.text_input("Ticker ADR", value=inst_actual.ticker_usd or "")
-                ratio_edit = st.number_input("Ratio CEDEAR", min_value=0.0, step=1.0, value=float(inst_actual.ratio_cedear or 0))
+                ratio_edit = st.number_input(
+                    "Ratio: cuántos CEDEARs = 1 acción", min_value=0.0, step=1.0,
+                    value=float(inst_actual.ratio_cedear or 0),
+                    help="Si es 2:1, poné 2. Para una acción argentina dejá 0.",
+                )
             guardar = st.form_submit_button("💾 Guardar cambios", type="primary")
 
         if guardar:
