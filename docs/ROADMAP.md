@@ -10,7 +10,7 @@ Estado: ✅ hecho · 🟡 en curso · ⬜ pendiente
 |---|------|--------|
 | — | G/P en USD-CCL (Cartera y Dashboard) | ✅ |
 | — | Métricas de rendimiento (`core/performance/metrics.py`) | ✅ |
-| — | Watchlist + página Candidatos (`core/decision/candidatos.py`) | 🟡 |
+| — | Watchlist + página Candidatos (`core/decision/candidatos.py`) | ✅ |
 | 1 | Simulador de rebalanceo | ⬜ |
 | 2 | Alertas en el Dashboard | ⬜ |
 | 3 | Snapshot de fundamentals | ⬜ |
