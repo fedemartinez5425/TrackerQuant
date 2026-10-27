@@ -6,6 +6,7 @@ from config.settings import settings
 from core.cloud_secrets import get_secret
 from core.data_providers.comafi_ratios import actualizar_cache, leer_cache
 from core.storage import get_backend_status, get_repository
+from core.viz import semaforos
 
 username = require_login()
 repo = get_repository()
@@ -229,8 +230,30 @@ snapshots = repo.list_snapshots()
 if not snapshots:
     st.info("Todavía no guardaste ningún snapshot.")
 else:
-    df_snap = pd.DataFrame([s.model_dump(exclude={"composicion_json"}) for s in snapshots])
-    st.dataframe(df_snap, width="stretch", hide_index=True)
+    df_snap = pd.DataFrame(
+        [
+            {
+                "Fecha": s.fecha,
+                "Valor US$": s.valor_total_usd,
+                "Posiciones": s.cantidad_posiciones,
+                "Volatilidad": s.volatilidad_anualizada,
+                "VaR 95%": s.var_95_pct,
+                "Beta": s.beta_vs_benchmark,
+                "Correlación": s.correlacion_promedio,
+            }
+            for s in sorted(snapshots, key=lambda x: x.fecha, reverse=True)
+        ]
+    )
+    st.dataframe(
+        semaforos.tabla(
+            df_snap,
+            {"Valor US$": "US$ {:,.2f}", "Volatilidad": "{:.1%}", "VaR 95%": "{:.2%}", "Beta": "{:.2f}", "Correlación": "{:.2f}"},
+            {"Volatilidad": "volatilidad", "Correlación": "correlacion"},
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+    st.caption("Los snapshots anteriores al 12/10/2026 tienen el valor en pesos, no en US$.")
 
 st.divider()
 st.subheader("Registro de auditoría")
@@ -239,5 +262,15 @@ eventos = repo.list_audit_events(limit=100)
 if not eventos:
     st.info("Todavía no hay eventos de auditoría.")
 else:
-    df = pd.DataFrame([e.model_dump() for e in eventos])
+    df = pd.DataFrame(
+        [
+            {
+                "Cuándo": e.timestamp.astimezone().strftime("%d/%m/%Y %H:%M"),
+                "Usuario": e.usuario,
+                "Acción": e.accion.replace("_", " ").capitalize(),
+                "Detalle": e.detalle,
+            }
+            for e in eventos
+        ]
+    )
     st.dataframe(df, width="stretch", hide_index=True)

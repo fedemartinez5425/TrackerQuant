@@ -30,10 +30,12 @@ st.plotly_chart(charts.linea_multi(normalizado), width="stretch")
 
 st.divider()
 st.subheader("Tabla de precios en USD equivalente (últimos 30 días con datos)")
-st.dataframe(historicos.dropna(how="all").tail(30).sort_index(ascending=False), width="stretch")
+ultimos = historicos.dropna(how="all").tail(30).sort_index(ascending=False)
+ultimos.index = ultimos.index.strftime("%d/%m/%Y")
+st.dataframe(ultimos.style.format("US$ {:,.2f}", na_rep="—"), width="stretch")
 
 st.caption(
     f"{len(historicos.dropna(how='all'))} días con datos disponibles en el período seleccionado. "
-    "Los días sin cotización (feriados de un mercado y no del otro) se completan hacia adelante "
-    "(forward-fill) para poder calcular retornos de forma consistente."
+    "Solo se usan los días en que cotizaron TODOS los activos (feriados de un mercado y no del "
+    "otro se descartan, no se rellenan), para no inventar retornos."
 )

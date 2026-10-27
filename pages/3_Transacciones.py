@@ -223,8 +223,40 @@ Ticker `NU` · CEDEAR · ticker en EEUU `NU` · ratio `2` · Cantidad `2` · Pre
                 return "❌ Anulada"
             return "✅ Vigente"
 
-        filas = [{"estado": _estado(t), **t.to_row()} for t in sorted(transacciones, key=lambda x: x.fecha, reverse=True)]
-        st.dataframe(pd.DataFrame(filas), width="stretch", hide_index=True)
+        filas = [
+            {
+                "Estado": _estado(t),
+                "Fecha": t.fecha,
+                "Operación": "🟢 Compra" if t.accion == TransactionAction.COMPRA else "🔴 Venta",
+                "Ticker": t.ticker,
+                "Cantidad": t.cantidad,
+                "Precio": t.precio,
+                "Moneda": t.moneda.value,
+                "Comisión": t.comision,
+                "Total": t.cantidad * t.precio + (t.comision if t.accion == TransactionAction.COMPRA else -t.comision),
+                "Notas": t.notas,
+                "ID": t.id,
+            }
+            for t in sorted(transacciones, key=lambda x: (x.fecha, x.creado_en), reverse=True)
+        ]
+        solo_vigentes = st.toggle("Ocultar anuladas y reversos", value=False)
+        if solo_vigentes:
+            filas = [f for f in filas if f["Estado"] == "✅ Vigente"]
+        st.dataframe(
+            pd.DataFrame(filas),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Fecha": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                "Cantidad": st.column_config.NumberColumn(format="%g"),
+                "Precio": st.column_config.NumberColumn(format="%.2f"),
+                "Comisión": st.column_config.NumberColumn(format="%.2f"),
+                "Total": st.column_config.NumberColumn(
+                    format="%.2f", help="Cantidad × precio, más la comisión en compras (menos en ventas). En la moneda de la fila."
+                ),
+                "ID": st.column_config.TextColumn(help="Identificador interno: lo vas a ver al reversar."),
+            },
+        )
 
         st.divider()
         st.subheader("Reversar una transacción")
@@ -268,7 +300,19 @@ with tab_instrumentos:
     if not instrumentos:
         st.info("Todavía no hay instrumentos registrados — se registran desde la pestaña de Nueva Transacción.")
     else:
-        df_inst = pd.DataFrame([i.model_dump() for i in instrumentos.values()])
+        df_inst = pd.DataFrame(
+            [
+                {
+                    "Ticker": i.ticker,
+                    "Tipo": "🌎 CEDEAR" if i.tipo_instrumento == TipoInstrumento.CEDEAR else "🇦🇷 Acción argentina",
+                    "Ticker en EEUU": i.ticker_usd or "—",
+                    "Ratio": f"{i.ratio_cedear:g}:1" if i.ratio_cedear else "—",
+                    "Nombre": i.nombre,
+                    "Actualizado": i.actualizado_en.strftime("%d/%m/%Y"),
+                }
+                for i in sorted(instrumentos.values(), key=lambda x: x.ticker)
+            ]
+        )
         st.dataframe(df_inst, width="stretch", hide_index=True)
 
     st.divider()
