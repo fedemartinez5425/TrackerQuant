@@ -39,7 +39,7 @@ no recomienda comprar nada, muestra el impacto cuantitativo y advierte que es un
 .venv\Scripts\Activate.ps1          # si falla: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 pip install -r requirements.txt
 streamlit run app.py                 # local usa CSV en data/ salvo que haya secrets de gsheets
-pytest -q tests                      # 107 tests, sin red (todo mockeado)
+pytest -q tests                      # 112 tests, sin red (todo mockeado)
 python -m pyflakes core pages        # pyflakes está en el venv, no en requirements.txt
 ```
 
@@ -66,6 +66,8 @@ core/forecasting/       volatility_garch (GARCH-t) · returns_forecast (cono) ·
 core/data_providers/    yfinance + Alpha Vantage con cache en memoria · ccl_provider · comafi_ratios
 core/importers/         broker_movimientos (CSV ';' formato AR) · import_service · drive_sync · portfolio_report
 core/insights/          rules_engine (reglas determinísticas -> reporte Markdown)
+core/viz/               palette (colores, fuente única) · charts (Plotly) · semaforos (umbrales
+                        🟢🟡🔴 + pandas Styler para st.dataframe)
 core/auth/              streamlit-authenticator; fail-closed en Cloud
 ```
 
@@ -107,6 +109,17 @@ Las páginas no deben tener lógica de negocio: llaman a `core/`. `core/` no imp
   quedaron en ARS.
 - **Esquema de Sheets/CSV**: los headers salen de las constantes `*_FIELDS` en
   `csv_repository.py`. Agregar columnas requiere migrar las pestañas existentes en Sheets.
+
+## UI: tablas y semáforos
+
+- Colores: `core/viz/palette.py` es la fuente única; `.streamlit/config.toml` repite la paleta
+  para los widgets nativos (sliders, checkboxes, grilla de tablas).
+- `st.dataframe` dibuja en canvas: el CSS no llega a las celdas. Colores y formato van por
+  `semaforos.tabla(df, formatos, reglas)` (Styler) o `st.column_config`.
+- Umbrales del semáforo en `core/viz/semaforos.py` (vol 25/40%, peso 15/25%, correlación
+  0,4/0,7, max DD −20/−35%, prima ±3/6%, RSI 30–70). Los de vol y correlación coinciden con
+  `semaforo_riesgo` y `rules_engine`: si se cambian, cambiarlos en los dos lados (hay test).
+- Cada tabla con semáforo lleva debajo la leyenda (`semaforos.LEYENDA`) con los umbrales.
 
 ## Definiciones de métricas (`core/performance/metrics.py`)
 

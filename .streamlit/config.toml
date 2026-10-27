@@ -1,9 +1,11 @@
 [theme]
+# Mismos colores que core/viz/palette.py (sliders, checkboxes, foco y grilla de tablas
+# usan este tema; el resto lo pinta app_style.py).
 base = "dark"
-primaryColor = "#C98B3B"
-backgroundColor = "#12141A"
-secondaryBackgroundColor = "#1B1E27"
-textColor = "#E8E6E0"
+primaryColor = "#00E8A8"
+backgroundColor = "#070B0A"
+secondaryBackgroundColor = "#131F1B"
+textColor = "#EAF6F1"
 font = "sans serif"
 
 [server]

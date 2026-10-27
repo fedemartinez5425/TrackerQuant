@@ -34,7 +34,8 @@ st.caption("Costo promedio ponderado (no FIFO/LIFO), recalculado a partir de tod
 posiciones = obtener_cartera_actual()
 
 if not posiciones:
-    st.info("Todavía no cargaste ninguna transacción. Andá a **Transacciones** para empezar.")
+    st.info("Todavía no cargaste ninguna transacción.")
+    st.page_link("pages/3_Transacciones.py", label="Cargar tu primera compra", icon="📝")
     st.stop()
 
 resumen = resumen_cartera(posiciones)

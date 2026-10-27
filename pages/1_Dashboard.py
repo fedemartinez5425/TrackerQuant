@@ -18,6 +18,7 @@ from core.storage import get_repository
 from core.storage.models import PortfolioSnapshot
 from core.viz import charts
 from core.viz import palette as p
+from core.viz import semaforos
 
 username = require_login()
 mostrar_ccl_sidebar()
@@ -27,7 +28,10 @@ st.caption("Data Finance · Risk Analytics — vista general de la cartera, medi
 
 posiciones = obtener_cartera_actual()
 if not posiciones:
-    st.info("Todavía no cargaste ninguna transacción. Andá a **Transacciones** para empezar.")
+    st.info("Todavía no cargaste ninguna transacción: cargá tu primera compra y el tablero se arma solo.")
+    c1, c2 = st.columns(2)
+    c1.page_link("pages/3_Transacciones.py", label="Cargar una compra a mano", icon="📝")
+    c2.page_link("pages/7_Importar_Broker.py", label="Importar el CSV del broker", icon="📥")
     st.stop()
 
 resumen = resumen_cartera(posiciones)
@@ -64,7 +68,8 @@ st.markdown(
 )
 
 # ==================== KPIs ====================
-k1, k2, k2u, k3, k4, k5 = st.columns(6)
+# 2 filas de 3: en 6 columnas los montos se cortaban. Arriba plata, abajo riesgo.
+k1, k2, k2u = st.columns(3)
 k1.metric("Valor Total", formato_moneda(resumen["valor_actual_total"]))
 k2.metric(
     "G/P en pesos",
@@ -77,9 +82,21 @@ k2u.metric(
     delta=formato_pct(resumen["ganancia_perdida_usd_pct_total"]),
     help="Cada compra al CCL de su fecha vs. valor actual al CCL de hoy.",
 )
-k3.metric("Portfolio VaR (95%, 1 día)", formato_pct(riesgo["var_95_pct"]))
-k4.metric("Expected Shortfall (95%)", formato_pct(riesgo["cvar_95_pct"]))
-k5.metric("Volatilidad Anual", formato_pct(riesgo["volatilidad_anualizada"]))
+k3, k4, k5 = st.columns(3)
+k3.metric(
+    "Portfolio VaR (95%, 1 día)", formato_pct(riesgo["var_95_pct"]),
+    help="En 95 de cada 100 días, la pérdida diaria no debería superar este porcentaje.",
+)
+k4.metric(
+    "Expected Shortfall (95%)", formato_pct(riesgo["cvar_95_pct"]),
+    help="Pérdida promedio en el 5% de los peores días.",
+)
+vol = riesgo["volatilidad_anualizada"]
+k5.metric(
+    "Volatilidad Anual",
+    f"{semaforos.senal([semaforos.nivel(vol, 'volatilidad')])} {formato_pct(vol)}" if vol is not None else "—",
+    help=f"🟢 ≤ {semaforos.VOL_MEDIA:.0%} · 🟡 hasta {semaforos.VOL_ALTA:.0%} · 🔴 > {semaforos.VOL_ALTA:.0%}.",
+)
 
 st.divider()
 
