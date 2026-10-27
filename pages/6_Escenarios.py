@@ -23,6 +23,7 @@ from core.portfolio.portfolio_engine import (
 )
 from core.risk.summary import calcular_resumen_riesgo
 from core.storage.models import Currency, Instrumento, TipoInstrumento, Transaction, TransactionAction
+from core.viz import semaforos
 
 username = require_login()
 
@@ -222,20 +223,27 @@ with tab_simulador:
                 historicos_simulado, pesos_simulado, resumen_simulado["valor_actual_total"],
                 settings.DEFAULT_BENCHMARK, settings.STRESS_SCENARIOS,
             )
+            beta = f"Beta vs. {settings.DEFAULT_BENCHMARK}"
+            claves = {
+                "Volatilidad anualizada": "volatilidad_anualizada", "VaR histórico 95%": "var_95_pct",
+                beta: "beta_cartera", "Correlación promedio": "correlacion_ponderada",
+            }
             tabla = pd.DataFrame(
                 {
-                    "Métrica": ["Volatilidad Anualizada", "VaR histórico 95%", f"Beta vs. {settings.DEFAULT_BENCHMARK}", "Correlación promedio"],
-                    "Actual": [
-                        formato_pct(riesgo_actual["volatilidad_anualizada"]), formato_pct(riesgo_actual["var_95_pct"]),
-                        f"{riesgo_actual['beta_cartera']:.2f}" if riesgo_actual["beta_cartera"] is not None else "—",
-                        f"{riesgo_actual['correlacion_ponderada']:.2f}" if riesgo_actual["correlacion_ponderada"] is not None else "—",
-                    ],
-                    "Escenario": [
-                        formato_pct(riesgo_simulado["volatilidad_anualizada"]), formato_pct(riesgo_simulado["var_95_pct"]),
-                        f"{riesgo_simulado['beta_cartera']:.2f}" if riesgo_simulado["beta_cartera"] is not None else "—",
-                        f"{riesgo_simulado['correlacion_ponderada']:.2f}" if riesgo_simulado["correlacion_ponderada"] is not None else "—",
-                    ],
-                }
+                    "Actual": [riesgo_actual[k] for k in claves.values()],
+                    "Escenario": [riesgo_simulado[k] for k in claves.values()],
+                },
+                index=list(claves),
+                dtype=float,
             )
-            st.dataframe(tabla, width="stretch", hide_index=True)
+            estilo = tabla.style
+            for fila in tabla.index:
+                formato = "{:.2f}" if fila in (beta, "Correlación promedio") else "{:.1%}"
+                estilo = estilo.format(formato, subset=pd.IndexSlice[[fila], :], na_rep="—")
+            st.dataframe(
+                semaforos.estilar_filas(
+                    estilo, {"Volatilidad anualizada": "volatilidad", "Correlación promedio": "correlacion"}
+                ),
+                width="stretch",
+            )
             st.caption("Ambas columnas usan la misma ventana de precios históricos — la diferencia viene solo de los pesos, no de precios futuros.")

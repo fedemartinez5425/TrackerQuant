@@ -1,6 +1,5 @@
 import json
 
-import pandas as pd
 import streamlit as st
 
 from app_helpers import (
@@ -11,7 +10,6 @@ from app_helpers import (
     obtener_historicos_riesgo,
     require_login,
 )
-from config.settings import settings
 from core.forecasting.backtest import tabla_backtest
 from core.forecasting.returns_forecast import cono_incertidumbre, proyectar_retorno_acumulado, proyectar_valor_cartera
 from core.forecasting.volatility_garch import resumen_forecast_volatilidad
@@ -19,7 +17,7 @@ from core.portfolio.portfolio_engine import resumen_cartera
 from core.risk.volatility import retorno_diario_cartera
 from core.storage import get_repository
 from core.storage.models import PortfolioForecast
-from core.viz import charts
+from core.viz import charts, semaforos
 
 username = require_login()
 
@@ -156,9 +154,15 @@ with tab_backtest:
             mae = df_backtest["error_pp"].abs().mean()
             st.metric("Error absoluto promedio (MAE)", f"{mae:.2f} puntos porcentuales")
             st.dataframe(
-                df_backtest.style.format(
-                    {"vol_pronosticada": "{:.2%}", "vol_realizada": "{:.2%}", "error_pp": "{:+.2f} pp"}
+                semaforos.tabla(
+                    df_backtest,
+                    {"vol_pronosticada": "{:.2%}", "vol_realizada": "{:.2%}", "error_pp": "{:+.2f} pp"},
+                    {"vol_pronosticada": "volatilidad", "vol_realizada": "volatilidad", "error_pp": "error_pp"},
                 ),
                 width="stretch", hide_index=True,
             )
-            st.caption("Error positivo = el modelo subestimó la volatilidad real. Error negativo = la sobreestimó.")
+            st.caption(
+                "Error positivo = el modelo subestimó la volatilidad real. Error negativo = la sobreestimó. "
+                f"{semaforos.LEYENDA}: error 🟢 ≤ {semaforos.ERROR_PP_MEDIO:g} pp, 🟡 hasta {semaforos.ERROR_PP_ALTO:g} pp, "
+                f"🔴 más de {semaforos.ERROR_PP_ALTO:g} pp."
+            )

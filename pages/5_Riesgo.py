@@ -13,7 +13,7 @@ from core.risk.correlation import (
 from core.risk.stress_test import beta_ponderado_cartera, betas_por_activo, escenarios_estres
 from core.risk.var import peor_dia_historico, resumen_var_cvar
 from core.risk.volatility import indice_base_100, retorno_diario_cartera, volatilidad_anualizada
-from core.viz import charts
+from core.viz import charts, semaforos
 
 username = require_login()
 
@@ -46,7 +46,11 @@ with tab_var:
     peor_pct, peor_fecha = peor_dia_historico(retorno_cartera)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Volatilidad Anualizada", f"{vol_anual:.1%}" if vol_anual is not None else "—")
+    c1.metric(
+        "Volatilidad Anualizada",
+        f"{semaforos.senal([semaforos.nivel(vol_anual, 'volatilidad')])} {vol_anual:.1%}" if vol_anual is not None else "—",
+        help=f"🟢 ≤ {semaforos.VOL_MEDIA:.0%} · 🟡 hasta {semaforos.VOL_ALTA:.0%} · 🔴 > {semaforos.VOL_ALTA:.0%}.",
+    )
     c2.metric("Retorno diario promedio", f"{retorno_cartera.mean():.3%}" if not retorno_cartera.empty else "—")
     c3.metric(
         "Peor día histórico", f"{peor_pct:.2%}" if peor_pct is not None else "—",
@@ -100,8 +104,14 @@ with tab_corr:
         corr_ponderada = correlacion_promedio_ponderada(matriz, pesos)
 
         c1, c2 = st.columns(2)
-        c1.metric("Correlación promedio (simple)", f"{corr_simple:.2f}" if corr_simple is not None else "—")
-        c2.metric("Correlación promedio (ponderada)", f"{corr_ponderada:.2f}" if corr_ponderada is not None else "—")
+        def _corr_con_senal(corr):
+            return f"{semaforos.senal([semaforos.nivel(corr, 'correlacion')])} {corr:.2f}" if corr is not None else "—"
+
+        c1.metric("Correlación promedio (simple)", _corr_con_senal(corr_simple))
+        c2.metric(
+            "Correlación promedio (ponderada)", _corr_con_senal(corr_ponderada),
+            help=f"🟢 ≤ {semaforos.CORR_MEDIA} diversifica · 🟡 hasta {semaforos.CORR_ALTA} · 🔴 > {semaforos.CORR_ALTA} se mueven juntas.",
+        )
 
         st.markdown(f"##### {lectura_diversificacion(corr_ponderada if corr_ponderada is not None else corr_simple)}")
         st.caption(
@@ -139,9 +149,10 @@ with tab_estres:
         st.plotly_chart(charts.barras_escenarios_estres(filas_estres), width="stretch")
         df_escenarios = pd.DataFrame(filas_estres)
         st.dataframe(
-            df_escenarios.style.format(
+            semaforos.tabla(
+                df_escenarios,
                 {"Shock Benchmark": "{:.0%}", "Impacto Estimado %": "{:.1%}", "Impacto Estimado $": "$ {:,.2f}"},
-                na_rep="—",
+                {"Impacto Estimado %": "signo", "Impacto Estimado $": "signo"},
             ),
             width="stretch",
             hide_index=True,

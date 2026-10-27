@@ -24,6 +24,7 @@ from core.performance.metrics import metricas_cartera, metricas_por_activo
 from core.portfolio.portfolio_engine import resumen_cartera
 from core.storage import get_repository
 from core.storage.models import AuditEvent, TipoInstrumento, WatchlistItem
+from core.viz import semaforos
 
 username = require_login()
 mostrar_ccl_sidebar()
@@ -145,12 +146,30 @@ COLUMNAS_METRICAS = {
     "vs_sma50": "vs SMA50", "vs_sma200": "vs SMA200", "rsi_14": "RSI 14",
 }
 tabla = metricas.rename(columns=COLUMNAS_METRICAS)
-no_pct = {"Sharpe 1a", "Sharpe 3a", "Sortino 1a", "Sortino 3a", "RSI 14", "Rol"}
-st.dataframe(
-    tabla.style.format(
-        {c: ("{:.2f}" if c in no_pct else "{:.1%}") for c in tabla.columns if c != "Rol"}, na_rep="—"
-    ),
-    width="stretch",
+NO_PCT = {"Sharpe 1a", "Sharpe 3a", "Sortino 1a", "Sortino 3a", "RSI 14"}
+FORMATOS_METRICAS = {c: ("{:.2f}" if c in NO_PCT else "{:.1%}") for c in COLUMNAS_METRICAS.values()}
+REGLAS_METRICAS = {
+    "CAGR 1a": "signo", "CAGR 3a": "signo", "Vol 1a": "volatilidad", "Vol 3a": "volatilidad",
+    "Sharpe 1a": "signo", "Sharpe 3a": "signo", "Sortino 1a": "signo", "Sortino 3a": "signo",
+    "Max DD 1a": "drawdown", "Max DD 3a": "drawdown", "DD actual": "drawdown",
+    "Ret 1m": "signo", "Ret 3m": "signo", "Ret 6m": "signo", "Mom 12-1": "signo",
+    "vs SMA50": "signo", "vs SMA200": "signo", "RSI 14": "rsi",
+}
+GRUPOS_METRICAS = {
+    "📈 Rendimiento": ["CAGR 1a", "CAGR 3a", "Sharpe 1a", "Sharpe 3a", "Sortino 1a", "Sortino 3a"],
+    "⚠️ Riesgo": ["Vol 1a", "Vol 3a", "Max DD 1a", "Max DD 3a", "DD actual"],
+    "🧭 Momentum y técnicos": ["Ret 1m", "Ret 3m", "Ret 6m", "Mom 12-1", "vs SMA50", "vs SMA200", "RSI 14"],
+}
+for pestania, columnas in zip(st.tabs(list(GRUPOS_METRICAS)), GRUPOS_METRICAS.values()):
+    with pestania:
+        st.dataframe(
+            semaforos.tabla(tabla[["Rol"] + columnas], FORMATOS_METRICAS, REGLAS_METRICAS), width="stretch"
+        )
+st.caption(
+    f"{semaforos.LEYENDA}. Vol: 🟡 > {semaforos.VOL_MEDIA:.0%}, 🔴 > {semaforos.VOL_ALTA:.0%}. "
+    f"Max DD: 🟡 peor que {semaforos.DD_MEDIO:.0%}, 🔴 peor que {semaforos.DD_ALTO:.0%}. "
+    f"RSI: 🔴 fuera de {semaforos.RSI_SOBREVENDIDO}–{semaforos.RSI_SOBRECOMPRADO} (sobrevendido / sobrecomprado). "
+    "Rendimiento y momentum: verde si es positivo."
 )
 with st.expander("¿Cómo se calcula cada métrica?"):
     st.markdown(
@@ -206,8 +225,16 @@ COLUMNAS_RANKING = {
     "peso_1_unidad": "Peso 1 unidad", "unidades": "Unidades p/ objetivo", "error": "Aviso",
 }
 tabla_ranking = ranking.rename(columns=COLUMNAS_RANKING)
+REGLAS_RANKING = {
+    "Δ Vol 1a": "signo_inverso", "Δ Vol 3a": "signo_inverso",
+    "Δ Sharpe 1a": "signo", "Δ Sharpe 3a": "signo",
+    "Δ Max DD 1a": "signo", "Δ Max DD 3a": "signo",
+    "Corr. cartera": "correlacion", "Corr. máx.": "correlacion",
+}
+tabla_ranking.insert(0, "Señal", semaforos.columna_senal(tabla_ranking, {"Δ Sharpe 3a": "signo", "Δ Vol 3a": "signo_inverso"}))
 st.dataframe(
-    tabla_ranking.style.format(
+    semaforos.tabla(
+        tabla_ranking,
         {
             "Δ Vol 1a": "{:+.2%}", "Δ Vol 3a": "{:+.2%}",
             "Δ Sharpe 1a": "{:+.2f}", "Δ Sharpe 3a": "{:+.2f}",
@@ -216,9 +243,14 @@ st.dataframe(
             "Precio 1 unidad": "$ {:,.2f}", "Peso 1 unidad": "{:.1%}",
             "Ruedas": "{:,.0f}", "Unidades p/ objetivo": "{:,.0f}",
         },
-        na_rep="—",
+        REGLAS_RANKING,
     ),
     width="stretch",
+)
+st.caption(
+    f"{semaforos.LEYENDA}. Verde = el candidato mejora la cartera en esa métrica (Δ Vol: baja; "
+    f"Δ Sharpe y Δ Max DD: sube). Señal = peor de Δ Sharpe 3a y Δ Vol 3a. Correlación: "
+    f"🟡 > {semaforos.CORR_MEDIA}, 🔴 > {semaforos.CORR_ALTA} (diversifica poco)."
 )
 
 # ==================== DETALLE ====================
@@ -237,12 +269,13 @@ else:
         index=[COLUMNAS_METRICAS[k] for k in claves],
     )
     comparacion["Δ"] = comparacion.iloc[:, 1] - comparacion.iloc[:, 0]
-    st.dataframe(
-        comparacion.style.format(
-            lambda v: "—" if pd.isna(v) else f"{v:.3f}", na_rep="—"
-        ),
-        width="stretch",
-    )
+    estilo = comparacion.style
+    for fila in comparacion.index:
+        formato = "{:.2f}" if fila in NO_PCT else "{:.2%}"
+        estilo = estilo.format(formato, subset=pd.IndexSlice[[fila], comparacion.columns[:2]], na_rep="—")
+        estilo = estilo.format("{:+" + formato[2:], subset=pd.IndexSlice[[fila], ["Δ"]], na_rep="—")
+    reglas_delta = {f: ("signo_inverso" if f.startswith("Vol") else "signo") for f in comparacion.index}
+    st.dataframe(semaforos.estilar_filas(estilo, reglas_delta, columnas=["Δ"]), width="stretch")
     corr = detalle["corr_posiciones"]
     if not corr.empty:
         st.caption("Correlación de retornos diarios con cada tenencia:")
