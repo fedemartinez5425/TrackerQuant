@@ -35,6 +35,7 @@ from typing import Callable
 
 import pandas as pd
 
+from config.settings import settings
 from core import data_providers
 from core.data_providers.ccl_provider import ccl_en_fecha, get_ccl_automatico, get_ccl_historico
 from core.storage.models import (
@@ -191,6 +192,14 @@ def construir_cartera_a_fecha(
 
 
 def _tenencias_a_posiciones(tenencias: dict[str, dict], instrumentos_por_ticker: dict[str, Instrumento]) -> list[Position]:
+    # Una sola descarga para los precios de hoy de todas las posiciones (+ pares del CCL);
+    # después cada get_price sale del cache en vez de hacer una request por ticker.
+    a_precargar = [t for t_ars, t_usd, _ratio in settings.CCL_PARES for t in (t_ars, t_usd)]
+    for ticker in tenencias:
+        inst = _instrumento_o_default(ticker, instrumentos_por_ticker)
+        a_precargar += [f"{ticker}.BA"] + ([inst.ticker_usd] if inst.ticker_usd else [])
+    data_providers.precargar(a_precargar)
+
     ccl_info = get_ccl_automatico()
     ccl_valor = ccl_info["valor"] if ccl_info else None
 

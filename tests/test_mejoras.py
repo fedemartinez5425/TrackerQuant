@@ -214,7 +214,8 @@ def test_get_history_cachea_y_no_vuelve_a_llamar_al_proveedor():
     from core import data_providers
 
     data_providers.limpiar_cache()
-    df = pd.DataFrame({"AAA": [1.0, 2.0]}, index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
+    hoy = pd.Timestamp.today().normalize()
+    df = pd.DataFrame({"AAA": [1.0, 2.0]}, index=[hoy - pd.Timedelta(days=2), hoy - pd.Timedelta(days=1)])
     with patch.object(data_providers._primary, "get_history", return_value=df) as mock:
         a = data_providers.get_history("AAA", period="1y")
         b = data_providers.get_history("AAA", period="1y")

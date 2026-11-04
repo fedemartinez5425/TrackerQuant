@@ -27,7 +27,7 @@ from datetime import date, datetime
 
 from core.data_providers.comafi_ratios import obtener_ratio
 from config.settings import settings
-from core.storage.models import Currency, TipoInstrumento, TransactionAction
+from core.storage.models import TipoInstrumento, TransactionAction
 
 TIPOS_OPERACION_SOPORTADAS = {
     "Compra": TransactionAction.COMPRA,

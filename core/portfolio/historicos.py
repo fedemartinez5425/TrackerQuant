@@ -27,6 +27,7 @@ from typing import NamedTuple
 
 import pandas as pd
 
+from config.settings import settings
 from core import data_providers
 from core.data_providers.ccl_provider import get_ccl_historico
 from core.storage.models import TipoInstrumento
@@ -49,6 +50,24 @@ def desde_posiciones(posiciones) -> list[InstrumentoRiesgo]:
     ]
 
 
+def tickers_de_mercado(instrumentos: list[InstrumentoRiesgo]) -> list[str]:
+    """Tickers de yfinance que hacen falta para valuar estos instrumentos en
+    USD equivalente: ADR de cada CEDEAR, `.BA` de cada acción argentina y,
+    si hay acciones argentinas, los pares del CCL."""
+    tickers: list[str] = []
+    hay_accion_arg = False
+    for inst in instrumentos:
+        if inst.tipo_instrumento == TipoInstrumento.CEDEAR and inst.ticker_usd:
+            tickers.append(inst.ticker_usd)
+        else:
+            tickers.append(f"{inst.ticker}.BA")
+            hay_accion_arg = True
+    if hay_accion_arg:
+        for ticker_ars, ticker_usd, _ in settings.CCL_PARES:
+            tickers += [ticker_ars, ticker_usd]
+    return tickers
+
+
 def historicos_usd_equivalente(
     instrumentos: list[InstrumentoRiesgo], period: str | None = None
 ) -> pd.DataFrame:
@@ -58,6 +77,8 @@ def historicos_usd_equivalente(
     frames = []
     ccl_hist = None
     necesita_ccl = any(i.tipo_instrumento == TipoInstrumento.ACCION_ARG for i in instrumentos)
+    # Todo lo que se va a pedir abajo, en una sola descarga.
+    data_providers.precargar(tickers_de_mercado(instrumentos), period)
     if necesita_ccl:
         ccl_hist = get_ccl_historico(period)
 

@@ -12,13 +12,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          # Misma versión que Streamlit Cloud (requirements.txt no fija una).
+          # Misma versión que Streamlit Cloud (Settings → Python version de la app).
           python-version: "3.14"
           cache: pip
-      - name: Instalar dependencias
+          cache-dependency-path: requirements*.txt
+      - name: Instalar dependencias (versiones exactas de producción)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
-      - name: pytest
+          pip install -r requirements-dev.txt
+      - name: pip check (dependencias compatibles entre sí)
+        run: pip check
+      - name: pyflakes
+        run: python -m pyflakes app.py app_helpers.py app_style.py core pages scripts
+      - name: pytest (incluye smoke test de todas las páginas)
         # Los tests no salen a internet (tests/conftest.py): no hacen falta secrets.
         run: pytest -q tests

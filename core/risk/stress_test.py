@@ -9,7 +9,6 @@ dispararse durante las crisis, así que el impacto real puede ser peor.
 """
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 

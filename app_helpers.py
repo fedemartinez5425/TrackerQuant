@@ -20,6 +20,10 @@ from core.portfolio.portfolio_engine import construir_cartera
 from core.storage import get_repository
 from core.storage.models import Instrumento, TipoInstrumento, Transaction, WatchlistItem
 
+# Tope de combinaciones (tickers, período) cacheadas: en Cloud la RAM es ~1 GB
+# y sin tope cada cartera/período distinto quedaba en memoria para siempre.
+CACHE_MAX_ENTRADAS = 12
+
 
 def require_login() -> str:
     """Verifica que haya sesión activa. El header de marca, el usuario y el
@@ -45,12 +49,12 @@ def invalidar_caches() -> None:
     data_providers.limpiar_cache()
 
 
-@st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, show_spinner=False)
+@st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, max_entries=CACHE_MAX_ENTRADAS, show_spinner=False)
 def _cached_history(tickers: tuple[str, ...], period: str) -> pd.DataFrame:
     return data_providers.get_history_multi(list(tickers), period=period)
 
 
-@st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, show_spinner=False)
+@st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, max_entries=1, show_spinner=False)
 def _cached_ccl() -> dict | None:
     from core.data_providers.ccl_provider import get_ccl_automatico
 
@@ -70,9 +74,10 @@ def obtener_instrumentos() -> dict[str, Instrumento]:
 
 
 def obtener_cartera_actual():
-    transacciones = obtener_transacciones()
-    instrumentos = obtener_instrumentos()
-    return construir_cartera(transacciones, instrumentos)
+    with st.spinner("Leyendo transacciones y precios de hoy…"):
+        transacciones = obtener_transacciones()
+        instrumentos = obtener_instrumentos()
+        return construir_cartera(transacciones, instrumentos)
 
 
 def obtener_historicos(tickers: list[str], period: str | None = None) -> pd.DataFrame:
@@ -82,7 +87,10 @@ def obtener_historicos(tickers: list[str], period: str | None = None) -> pd.Data
     return _cached_history(tuple(sorted(set(tickers))), period)
 
 
-@st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, show_spinner="Trayendo históricos de precios...")
+@st.cache_data(
+    ttl=settings.PRICE_CACHE_TTL_SECONDS, max_entries=CACHE_MAX_ENTRADAS,
+    show_spinner="Trayendo históricos de precios (en una sola descarga)…",
+)
 def _cached_historicos_usd(instrumentos: tuple, period: str) -> pd.DataFrame:
     return historicos_usd_equivalente(list(instrumentos), period=period)
 
@@ -121,7 +129,7 @@ def obtener_historicos_decision(posiciones, watchlist: list[WatchlistItem]) -> p
     return _cached_historicos_usd(tuple(sorted(instrumentos.values())), settings.HISTORY_PERIOD_DECISION)
 
 
-@st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, show_spinner=False)
+@st.cache_data(ttl=settings.PRICE_CACHE_TTL_SECONDS, max_entries=200, show_spinner=False)
 def _cached_precio_unidad(ticker: str, tipo: str, ticker_usd: str | None, ratio: float | None, ccl: float | None):
     from core.decision.candidatos import precio_unidad_ars
 

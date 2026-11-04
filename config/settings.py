@@ -54,6 +54,9 @@ class Settings:
     HISTORY_PERIOD: str = os.getenv("HISTORY_PERIOD", "2y")
     # Ventana más larga para la capa de decisión (métricas a 1 y 3 años, candidatos).
     HISTORY_PERIOD_DECISION: str = os.getenv("HISTORY_PERIOD_DECISION", "3y")
+    # Ventana que se baja de verdad por ticker (los pedidos más cortos se recortan
+    # de esta): una sola descarga sirve para riesgo (2y) y decisión (3y).
+    HISTORY_PERIOD_BASE: str = os.getenv("HISTORY_PERIOD_BASE", HISTORY_PERIOD_DECISION)
     # Tasa libre de riesgo anual en USD (Sharpe / Sortino).
     RISK_FREE_RATE: float = float(os.getenv("RISK_FREE_RATE", "0.04"))
     PRICE_CACHE_TTL_SECONDS: int = int(os.getenv("PRICE_CACHE_TTL_SECONDS", "900"))  # 15 min

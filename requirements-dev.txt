@@ -1,0 +1,4 @@
+# Solo para desarrollo y CI (no lo instala Streamlit Cloud).
+-r requirements.txt
+pytest==9.1.1
+pyflakes==4.0.3

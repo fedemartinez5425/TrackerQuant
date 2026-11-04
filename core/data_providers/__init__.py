@@ -1,11 +1,22 @@
 """
 Cadena de proveedores con fallback: yfinance primero, Alpha Vantage si falla.
 El resto de la app llama a estas funciones y no le importa de dónde vino el dato.
+
+Robustez (Yahoo limita las IPs compartidas de Streamlit Cloud):
+- Una sola historia por ticker en memoria: se baja la ventana más larga
+  (`settings.HISTORY_PERIOD_BASE`, 3 años) y los pedidos de 1 o 2 años se
+  recortan de ahí. Antes se bajaba todo dos veces (2y para riesgo, 3y para decisión).
+- `precargar()` baja en UNA request todo lo que falte (yf.download).
+- Cortacircuito: tras varias fallas seguidas (o un rate limit) se deja de
+  llamar a Yahoo por unos minutos y se usa lo que haya en memoria, en vez de
+  encadenar timeouts y dejar la página colgada.
 """
 from __future__ import annotations
 
 import logging
+import re
 import time
+from collections import OrderedDict
 
 import pandas as pd
 
@@ -18,12 +29,107 @@ logger = logging.getLogger(__name__)
 _primary = YFinanceProvider()
 _fallback = AlphaVantageProvider()
 
+MAX_TICKERS_EN_MEMORIA = 300  # tope del cache: en Cloud hay ~1 GB de RAM compartida
+
 _price_cache: dict[str, tuple[float, float]] = {}  # ticker -> (precio, timestamp)
-# (ticker, period) -> (DataFrame, timestamp). Sin esto, cada rerun de Streamlit
-# (cualquier clic) volvía a bajar 2 años de historia de cada posición.
-_history_cache: dict[tuple[str, str], tuple[pd.DataFrame, float]] = {}
+# ticker -> (DataFrame, timestamp, días cubiertos). Sin esto, cada rerun de
+# Streamlit (cualquier clic) volvía a bajar años de historia de cada posición.
+_history_cache: OrderedDict[str, tuple[pd.DataFrame, float, float]] = OrderedDict()
+
+# ---------------- Cortacircuito ----------------
+FALLAS_PARA_CORTAR = 3
+PAUSA_FALLAS_SEGUNDOS = 120
+PAUSA_RATE_LIMIT_SEGUNDOS = 300
+
+_fallas_seguidas = 0
+_cortado_hasta = 0.0
+_ultimo_exito: float | None = None
+_ultimo_error: str | None = None
 
 
+def _yahoo_disponible() -> bool:
+    return time.time() >= _cortado_hasta
+
+
+def _registrar_resultado() -> None:
+    """Actualiza el cortacircuito según el último error del proveedor primario."""
+    global _fallas_seguidas, _cortado_hasta, _ultimo_exito, _ultimo_error
+    error = _primary.ultimo_error
+    if error is None:
+        _fallas_seguidas = 0
+        _ultimo_exito = time.time()
+        return
+    _fallas_seguidas += 1
+    _ultimo_error = f"{type(error).__name__}: {error}"[:300]
+    if _primary.rate_limit:
+        _cortado_hasta = time.time() + PAUSA_RATE_LIMIT_SEGUNDOS
+        logger.warning("Yahoo limitó las requests (rate limit): pausa de %d s.", PAUSA_RATE_LIMIT_SEGUNDOS)
+    elif _fallas_seguidas >= FALLAS_PARA_CORTAR:
+        _cortado_hasta = time.time() + PAUSA_FALLAS_SEGUNDOS
+        logger.warning("Yahoo falló %d veces seguidas: pausa de %d s.", _fallas_seguidas, PAUSA_FALLAS_SEGUNDOS)
+
+
+def estado_proveedores() -> dict:
+    """Para la página Estado del sistema."""
+    restante = max(0.0, _cortado_hasta - time.time())
+    return {
+        "yahoo_disponible": restante == 0,
+        "pausa_restante_segundos": int(restante),
+        "fallas_seguidas": _fallas_seguidas,
+        "ultimo_exito": _ultimo_exito,
+        "ultimo_error": _ultimo_error,
+        "tickers_en_memoria": len(_history_cache),
+        "alpha_vantage_configurado": bool(settings.ALPHA_VANTAGE_API_KEY),
+    }
+
+
+# ---------------- Períodos ----------------
+_UNIDADES_DIAS = {"d": 1, "wk": 7, "mo": 30.4375, "y": 365.25}
+
+
+def dias_periodo(period: str) -> float:
+    """'2y' -> 730,5; '6mo' -> 182,6; 'max' (o desconocido) -> infinito."""
+    m = re.fullmatch(r"(\d+)(d|wk|mo|y)", period.strip())
+    if not m:
+        return float("inf")
+    return int(m.group(1)) * _UNIDADES_DIAS[m.group(2)]
+
+
+def _periodo_a_bajar(period: str) -> str:
+    """Se baja siempre al menos la ventana base, así un pedido de 2y y uno
+    de 3y comparten la misma descarga."""
+    base = settings.HISTORY_PERIOD_BASE
+    return period if dias_periodo(period) > dias_periodo(base) else base
+
+
+def _recortar(hist: pd.DataFrame, period: str) -> pd.DataFrame:
+    dias = dias_periodo(period)
+    if dias == float("inf") or hist.empty:
+        return hist.copy()
+    desde = pd.Timestamp.today().normalize() - pd.Timedelta(days=dias)
+    return hist.loc[hist.index >= desde].copy()
+
+
+def _guardar_historia(ticker: str, hist: pd.DataFrame, period_bajado: str) -> None:
+    _history_cache[ticker] = (hist, time.time(), dias_periodo(period_bajado))
+    _history_cache.move_to_end(ticker)
+    while len(_history_cache) > MAX_TICKERS_EN_MEMORIA:
+        _history_cache.popitem(last=False)
+
+
+def _historia_en_cache(ticker: str, period: str, aceptar_vencida: bool = False) -> pd.DataFrame | None:
+    item = _history_cache.get(ticker)
+    if not item:
+        return None
+    hist, ts, dias_cubiertos = item
+    if dias_cubiertos < dias_periodo(period):
+        return None
+    if not aceptar_vencida and time.time() - ts >= settings.PRICE_CACHE_TTL_SECONDS:
+        return None
+    return hist
+
+
+# ---------------- API pública ----------------
 def get_price(ticker: str, use_cache: bool = True) -> float | None:
     now = time.time()
     if use_cache and ticker in _price_cache:
@@ -31,15 +137,29 @@ def get_price(ticker: str, use_cache: bool = True) -> float | None:
         if now - ts < settings.PRICE_CACHE_TTL_SECONDS:
             return precio
 
-    precio = _primary.get_price(ticker)
-    fuente = _primary.name
+    # Si ya hay historia fresca en memoria, el último cierre ES el precio:
+    # evita una request por ticker (antes: 2 por posición + 6 para el CCL).
+    if use_cache:
+        hist = _historia_en_cache(ticker, "5d")
+        if hist is not None and ticker in hist.columns and hist[ticker].notna().any():
+            precio = float(hist[ticker].dropna().iloc[-1])
+            _price_cache[ticker] = (precio, now)
+            return precio
+
+    precio = None
+    if _yahoo_disponible():
+        precio = _primary.get_price(ticker)
+        _registrar_resultado()
     if precio is None:
         precio = _fallback.get_price(ticker)
-        fuente = _fallback.name
+    if precio is None:
+        # Último recurso: el último cierre conocido aunque el cache esté vencido.
+        hist = _historia_en_cache(ticker, "5d", aceptar_vencida=True)
+        if hist is not None and ticker in hist.columns and hist[ticker].notna().any():
+            precio = float(hist[ticker].dropna().iloc[-1])
 
     if precio is not None:
         _price_cache[ticker] = (precio, now)
-        logger.debug("Precio de %s: %s (fuente: %s)", ticker, precio, fuente)
     else:
         logger.warning("No se pudo obtener precio de %s en ningún proveedor.", ticker)
     return precio
@@ -47,22 +167,46 @@ def get_price(ticker: str, use_cache: bool = True) -> float | None:
 
 def get_history(ticker: str, period: str | None = None, use_cache: bool = True) -> pd.DataFrame | None:
     period = period or settings.HISTORY_PERIOD
-    clave = (ticker, period)
-    now = time.time()
-    if use_cache and clave in _history_cache:
-        hist, ts = _history_cache[clave]
-        if now - ts < settings.PRICE_CACHE_TTL_SECONDS:
-            return hist.copy()
+    if use_cache:
+        hist = _historia_en_cache(ticker, period)
+        if hist is not None:
+            return _recortar(hist, period)
 
-    hist = _primary.get_history(ticker, period=period)
+    period_bajado = _periodo_a_bajar(period)
+    hist = None
+    if _yahoo_disponible():
+        hist = _primary.get_history(ticker, period=period_bajado)
+        _registrar_resultado()
     if hist is None or hist.empty:
         logger.info("yfinance sin histórico para %s, probando Alpha Vantage...", ticker)
-        hist = _fallback.get_history(ticker, period=period)
+        hist = _fallback.get_history(ticker, period=period_bajado)
 
     if hist is not None and not hist.empty:
-        _history_cache[clave] = (hist, now)
-        return hist.copy()
+        _guardar_historia(ticker, hist, period_bajado)
+        return _recortar(hist, period)
+
+    # Yahoo caído: mejor una historia de hace un rato que nada.
+    vieja = _historia_en_cache(ticker, period, aceptar_vencida=True)
+    if vieja is not None:
+        logger.info("Usando histórico en memoria (vencido) de %s.", ticker)
+        return _recortar(vieja, period)
     return hist
+
+
+def precargar(tickers: list[str], period: str | None = None) -> None:
+    """Baja en UNA request los históricos que no estén frescos en memoria.
+    Después, get_history / get_price de esos tickers salen del cache."""
+    period = period or settings.HISTORY_PERIOD
+    faltantes = sorted({t for t in tickers if t and _historia_en_cache(t, period) is None})
+    if not faltantes or not _yahoo_disponible():
+        return
+    period_bajado = _periodo_a_bajar(period)
+    lote = _primary.get_history_lote(faltantes, period=period_bajado)
+    _registrar_resultado()
+    for ticker, hist in lote.items():
+        _guardar_historia(ticker, hist, period_bajado)
+    if lote:
+        logger.info("Precarga en lote: %d/%d tickers.", len(lote), len(faltantes))
 
 
 def limpiar_cache() -> None:
@@ -72,7 +216,7 @@ def limpiar_cache() -> None:
 
 
 def get_info(ticker: str) -> dict:
-    info = _primary.get_info(ticker)
+    info = _primary.get_info(ticker) if _yahoo_disponible() else {}
     if info:
         return info
     return _fallback.get_info(ticker)
@@ -80,6 +224,7 @@ def get_info(ticker: str) -> dict:
 
 def get_history_multi(tickers: list[str], period: str | None = None) -> pd.DataFrame:
     """Combina históricos de varios tickers en un solo DataFrame alineado por fecha."""
+    precargar(tickers, period)
     frames = []
     for t in tickers:
         h = get_history(t, period=period)

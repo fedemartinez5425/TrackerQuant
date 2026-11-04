@@ -8,7 +8,6 @@ Validaciones de negocio que van más allá de "el tipo de dato es correcto"
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
 
 from core.storage.models import Transaction, TransactionAction, transacciones_efectivas
 

@@ -8,6 +8,8 @@ Usa st.navigation() (no la carpeta pages/ automágica) para poder:
      nombre del archivo -- evita el mojibake que rompía el menú cuando
      el proyecto se descomprimía en Windows con nombres de archivo emoji.
 """
+import logging
+
 import streamlit as st
 
 import app_style
@@ -56,6 +58,7 @@ paginas = [
     st.Page("pages/11_Candidatos.py", title="Candidatos", icon="🎯"),
     st.Page("pages/7_Importar_Broker.py", title="Importar Broker", icon="📥"),
     st.Page("pages/8_Configuracion.py", title="Configuración", icon="⚙️"),
+    st.Page("pages/12_Estado.py", title="Estado del sistema", icon="🩺"),
 ]
 
 with st.sidebar:
@@ -91,4 +94,16 @@ if estado_storage["inconsistente"]:
         reset_repository_cache()
         st.rerun()
 
-pg.run()
+# Si una página falla, se muestra el error y el resto de la app sigue andando
+# (antes una excepción dejaba la pantalla a medio dibujar). st.stop / st.rerun
+# no se capturan acá: heredan de BaseException, no de Exception.
+try:
+    pg.run()
+except Exception as exc:  # noqa: BLE001
+    logging.getLogger("app").exception("Error en la página %s", pg.title)
+    st.error(
+        f"😵 La página **{pg.title}** falló al cargar. Las otras páginas siguen andando: "
+        "probá recargar o mirá **Estado del sistema** (Yahoo o Google Sheets pueden estar caídos)."
+    )
+    with st.expander("Detalle técnico (para pasárselo a quien mantenga la app)"):
+        st.exception(exc)
