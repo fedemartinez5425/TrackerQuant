@@ -18,6 +18,7 @@ from core.risk.volatility import retorno_diario_cartera
 from core.storage import get_repository
 from core.storage.models import PortfolioForecast
 from core.viz import charts, semaforos
+from core.viz.formato import fmt
 
 username = require_login()
 
@@ -81,10 +82,10 @@ shock de ayer al cuadrado (`alpha`) y la varianza de ayer (`beta`). Es el modelo
 industria para esto porque captura el "clustering" de volatilidad (períodos calmos y turbulentos
 se agrupan) — algo que un promedio móvil simple no ve.
 
-**Parámetros ajustados a tu cartera:** ω={resumen_vol['parametros']['omega']:.4f},
-α={resumen_vol['parametros']['alpha']:.4f}, β={resumen_vol['parametros']['beta']:.4f}
+**Parámetros ajustados a tu cartera:** ω={fmt(resumen_vol['parametros']['omega'], ".4f")},
+α={fmt(resumen_vol['parametros']['alpha'], ".4f")}, β={fmt(resumen_vol['parametros']['beta'], ".4f")}
 (α+β cercano a 1 = la volatilidad es muy persistente, tarda en volver a su promedio).
-Distribución t de Student con ν={resumen_vol['parametros']['nu']:.1f} grados de libertad
+Distribución t de Student con ν={fmt(resumen_vol['parametros']['nu'], ".1f")} grados de libertad
 (cuanto más bajo ν, más "gordas" las colas: más probables los días extremos que en una normal).
 
 **Limitación honesta:** el modelo asume que el patrón de volatilidad pasado se mantiene — no
@@ -93,7 +94,7 @@ bola de cristal.
                 """
             )
 
-        if st.button("💾 Guardar este forecast (para medir precisión después)"):
+        if st.button("💾 Guardar forecast", help="Para medir después qué tan preciso fue (pestaña Precisión Histórica)."):
             repo = get_repository()
             forecast = PortfolioForecast(
                 horizonte_dias=horizonte_dias,
@@ -152,7 +153,7 @@ with tab_backtest:
             st.info("Ningún forecast guardado llegó todavía a su fecha de horizonte.")
         else:
             mae = df_backtest["error_pp"].abs().mean()
-            st.metric("Error absoluto promedio (MAE)", f"{mae:.2f} puntos porcentuales")
+            st.metric("Error absoluto promedio (MAE)", f"{fmt(mae, ".2f")} puntos porcentuales")
             st.dataframe(
                 semaforos.tabla(
                     df_backtest,

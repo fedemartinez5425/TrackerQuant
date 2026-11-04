@@ -10,15 +10,20 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 
+from core.viz import formato
 from core.viz import palette as p
 
 
-def donut_exposicion(pesos: dict[str, float], titulo: str = "") -> go.Figure:
-    """Donut de exposición por posición, con etiqueta de % en cada segmento."""
+def donut_exposicion(pesos: dict[str, float], titulo: str = "", umbral_alerta: float | None = None) -> go.Figure:
+    """Donut de exposición por posición, con etiqueta de % en cada segmento.
+    Las posiciones que superan `umbral_alerta` van en rojo, y el centro
+    muestra el dato relevante: la posición más grande."""
     items = sorted(pesos.items(), key=lambda kv: kv[1], reverse=True)
     labels = [k for k, _ in items]
     values = [v for _, v in items]
     colores = (p.CHART_SEQUENCE * ((len(labels) // len(p.CHART_SEQUENCE)) + 1))[: len(labels)]
+    if umbral_alerta is not None:
+        colores = [p.DANGER if v > umbral_alerta else c for c, v in zip(colores, values)]
 
     fig = go.Figure(
         data=[
@@ -34,21 +39,28 @@ def donut_exposicion(pesos: dict[str, float], titulo: str = "") -> go.Figure:
             )
         ]
     )
-    total_pct = sum(values)
-    fig.add_annotation(
-        text=f"<b>{total_pct:.0%}</b><br><span style='font-size:11px;color={p.TEXT_SECONDARY}'>asignado</span>",
-        showarrow=False,
-        font=dict(family=p.FONT_FAMILY_DISPLAY, size=20, color=p.TEXT_PRIMARY),
-    )
+    if labels:
+        mayor_color = p.DANGER if umbral_alerta is not None and values[0] > umbral_alerta else p.TEXT_PRIMARY
+        fig.add_annotation(
+            text=(
+                f"<b>{formato.pct(values[0], 0)}</b><br>"
+                f"<span style='font-size:11px;color={p.TEXT_SECONDARY}'>mayor: {labels[0]}</span>"
+            ),
+            showarrow=False,
+            font=dict(family=p.FONT_FAMILY_DISPLAY, size=20, color=mayor_color),
+        )
     fig.update_layout(**p.plotly_layout_defaults(altura=320), showlegend=False, title=titulo)
     return fig
 
 
 def barras_horizontales(
-    categorias: list[str], valores: list[float], titulo: str = "", formato_pct: bool = True, invertir_color: bool = False
+    categorias: list[str], valores: list[float], titulo: str = "", formato_pct: bool = True, invertir_color: bool = False,
+    resaltar: set[str] | None = None, referencia: dict[str, float] | None = None, nombre_referencia: str = "peso",
 ) -> go.Figure:
     """Barras horizontales con degradado y etiqueta de dato al final de cada barra
-    (ej: contribución al riesgo por activo). Ordenadas de mayor a menor."""
+    (ej: contribución al riesgo por activo). Ordenadas de mayor a menor.
+    `resaltar`: categorías en rojo (alerta). `referencia`: un valor de
+    comparación por categoría (ej. el peso), que se agrega a la etiqueta."""
     orden = sorted(zip(categorias, valores), key=lambda t: abs(t[1]), reverse=True)
     cats = [c for c, _ in orden]
     vals = [v for _, v in orden]
@@ -58,8 +70,16 @@ def barras_horizontales(
     for v in vals:
         intensidad = 0.35 + 0.65 * (abs(v) / max_abs)
         colores.append(p.DANGER if (v < 0 and invertir_color) else _mezclar(p.ACCENT_DIM, p.ACCENT, intensidad))
+    if resaltar:
+        colores = [p.DANGER if c in resaltar else col for c, col in zip(cats, colores)]
 
-    textos = [f"{v:.1%}" if formato_pct else f"{v:,.2f}" for v in vals]
+    textos = [formato.pct(v, 1) if formato_pct else formato.fmt(v, ",.2f") for v in vals]
+    if referencia:
+        textos = [
+            f"{t}  <span style='color:{p.TEXT_SECONDARY}'>({nombre_referencia} {formato.pct(referencia[c], 0)})</span>"
+            if referencia.get(c) is not None else t
+            for c, t in zip(cats, textos)
+        ]
 
     fig = go.Figure(
         go.Bar(
@@ -75,13 +95,17 @@ def barras_horizontales(
     )
     fig.update_layout(**p.plotly_layout_defaults(altura=max(220, 42 * len(cats))), title=titulo)
     fig.update_yaxes(autorange="reversed")
-    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
+    # Lugar a la derecha para que la etiqueta de la barra más larga no se corte.
+    tope = max((abs(v) for v in vals), default=1) or 1
+    piso = min(0, min(vals, default=0))
+    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, range=[piso * 1.4, tope * 1.6])
     return fig
 
 
-def area_evolucion(serie: pd.Series, titulo: str = "", nombre: str = "Cartera") -> go.Figure:
+def area_evolucion(serie: pd.Series, titulo: str = "", nombre: str = "Cartera", marcar_maximo: bool = True) -> go.Figure:
     """Línea con relleno degradado -- evolución de índice/VaR/valor en el tiempo,
-    con el último valor remarcado como etiqueta (como el gráfico de referencia)."""
+    con el último valor remarcado como etiqueta. Con `marcar_maximo`, marca el
+    máximo y la caída actual desde ese máximo (en rojo si es fuerte)."""
     fig = go.Figure(
         go.Scatter(
             x=serie.index,
@@ -94,30 +118,68 @@ def area_evolucion(serie: pd.Series, titulo: str = "", nombre: str = "Cartera") 
                 colorscale=[[0, "rgba(0,232,168,0.0)"], [1, "rgba(0,232,168,0.28)"]],
             ),
             name=nombre,
-            hovertemplate="%{x|%d %b %Y}: %{y:.2f}<extra></extra>",
+            hovertemplate="%{x|%d/%m/%Y}: %{y:,.2f}<extra></extra>",
         )
     )
     ultimo_x, ultimo_y = serie.index[-1], serie.values[-1]
+    texto_ultimo = f"<b>{formato.fmt(ultimo_y, ',.2f')}</b>"
+    color_ultimo = p.ACCENT
+    if marcar_maximo and len(serie) > 1:
+        max_x, max_y = serie.idxmax(), serie.max()
+        caida = ultimo_y / max_y - 1 if max_y else 0
+        if max_x != ultimo_x:
+            fig.add_trace(go.Scatter(
+                x=[max_x], y=[max_y], mode="markers", marker=dict(color=p.TEXT_PRIMARY, size=7),
+                hovertemplate="Máximo %{x|%d/%m/%Y}: %{y:,.2f}<extra></extra>", showlegend=False,
+            ))
+            fig.add_annotation(
+                x=max_x, y=max_y, text=f"máx. {formato.fmt(max_y, ',.1f')}", showarrow=False, yshift=14,
+                font=dict(family=p.FONT_FAMILY_MONO, color=p.TEXT_SECONDARY, size=11),
+            )
+        if caida < -0.005:
+            texto_ultimo += f"<br>{formato.pct(caida, 1)} desde el máx."
+            if caida <= -0.10:
+                color_ultimo = p.DANGER
     fig.add_annotation(
-        x=ultimo_x, y=ultimo_y, text=f"<b>{ultimo_y:,.2f}</b>", showarrow=True, arrowhead=0,
-        ax=30, ay=-20, font=dict(family=p.FONT_FAMILY_MONO, color=p.ACCENT, size=13),
-        bgcolor=p.BG_PANEL_LIGHT, bordercolor=p.ACCENT, borderwidth=1, borderpad=4,
+        x=ultimo_x, y=ultimo_y, text=texto_ultimo, showarrow=True, arrowhead=0,
+        ax=-10, ay=-34, xanchor="right", font=dict(family=p.FONT_FAMILY_MONO, color=color_ultimo, size=12),
+        bgcolor=p.BG_PANEL_LIGHT, bordercolor=color_ultimo, borderwidth=1, borderpad=4, align="right",
     )
     fig.update_layout(**p.plotly_layout_defaults(altura=300), title=titulo, showlegend=False)
+    fig.update_xaxes(tickformat="%m/%Y")  # sin nombres de mes en inglés
     return fig
 
 
-def histograma_retornos(retornos: pd.Series, titulo: str = "") -> go.Figure:
-    """Distribución de retornos diarios, con la cola izquierda (pérdidas) resaltada."""
-    fig = go.Figure(
-        go.Histogram(
-            x=retornos * 100,
-            nbinsx=40,
-            marker=dict(color=p.ACCENT_DIM, line=dict(color=p.ACCENT, width=0.6)),
-            hovertemplate="Retorno: %{x:.2f}%<br>Días: %{y}<extra></extra>",
+def histograma_retornos(retornos: pd.Series, titulo: str = "", var_pct: float | None = None) -> go.Figure:
+    """Distribución de retornos diarios. Con `var_pct` (VaR 95%, negativo),
+    los días peores que el VaR van en rojo y se marca el umbral."""
+    x = retornos * 100
+    ancho = (x.max() - x.min()) / 40 if len(x) > 1 and x.max() > x.min() else 0.25
+    bins = dict(start=float(x.min()), end=float(x.max()) + ancho, size=ancho)
+    hover = "Retorno: %{x:.2f} %<br>Días: %{y}<extra></extra>"
+    fig = go.Figure()
+    if var_pct is not None:
+        corte = var_pct * 100
+        fig.add_trace(go.Histogram(
+            x=x[x <= corte], xbins=bins, name="Peores 5 % de los días",
+            marker=dict(color=p.DANGER, line=dict(color=p.DANGER, width=0.6)), hovertemplate=hover,
+        ))
+        fig.add_trace(go.Histogram(
+            x=x[x > corte], xbins=bins, name="Resto",
+            marker=dict(color=p.ACCENT_DIM, line=dict(color=p.ACCENT, width=0.6)), hovertemplate=hover,
+        ))
+        fig.add_vline(
+            x=corte, line_dash="dash", line_color=p.DANGER,
+            annotation_text=f"VaR 95 %: {formato.fmt(corte, '.2f')} %", annotation_position="top left",
+            annotation_font=dict(family=p.FONT_FAMILY_MONO, color=p.DANGER, size=11),
         )
+    else:
+        fig.add_trace(go.Histogram(
+            x=x, xbins=bins, marker=dict(color=p.ACCENT_DIM, line=dict(color=p.ACCENT, width=0.6)), hovertemplate=hover,
+        ))
+    fig.update_layout(
+        **p.plotly_layout_defaults(altura=280), title=titulo, bargap=0.05, barmode="overlay", showlegend=False,
     )
-    fig.update_layout(**p.plotly_layout_defaults(altura=280), title=titulo, bargap=0.05)
     fig.update_xaxes(title="Retorno diario (%)")
     fig.update_yaxes(title="Frecuencia (días)")
     return fig
@@ -151,7 +213,7 @@ def barras_escenarios_estres(escenarios: list[dict], titulo: str = "") -> go.Fig
             x=labels,
             y=valores,
             marker=dict(color=p.DANGER),
-            text=[f"$ {v:,.0f}" for v in valores],
+            text=[formato.moneda(v, decimales=0) for v in valores],
             textposition="outside",
             textfont=dict(family=p.FONT_FAMILY_MONO, color=p.TEXT_PRIMARY, size=11),
             hovertemplate="%{x}: $ %{y:,.0f}<extra></extra>",
@@ -175,7 +237,15 @@ def linea_multi(df: pd.DataFrame, titulo: str = "") -> go.Figure:
                 hovertemplate=f"{col}: " + "%{y:.1f}<extra></extra>",
             )
         )
+        serie = df[col].dropna()
+        if not serie.empty:  # etiqueta de dato al final de cada línea
+            fig.add_annotation(
+                x=serie.index[-1], y=serie.iloc[-1], text=f"{col} {formato.fmt(serie.iloc[-1], '.0f')}",
+                showarrow=False, xanchor="left", xshift=6,
+                font=dict(family=p.FONT_FAMILY_MONO, color=color, size=11),
+            )
     fig.update_layout(**p.plotly_layout_defaults(altura=340), title=titulo)
+    fig.update_layout(margin=dict(l=10, r=90, t=40, b=10))
     return fig
 
 

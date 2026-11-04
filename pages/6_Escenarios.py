@@ -24,6 +24,8 @@ from core.portfolio.portfolio_engine import (
 from core.risk.summary import calcular_resumen_riesgo
 from core.storage.models import Currency, Instrumento, TipoInstrumento, Transaction, TransactionAction
 from core.viz import semaforos
+from core.viz import formato as formato_ar
+from core.viz.formato import fmt
 
 username = require_login()
 
@@ -95,7 +97,7 @@ with tab_historico:
                     d1.metric("Semáforo", riesgo_h["semaforo"])
                     d2.metric("Volatilidad Anual.", formato_pct(riesgo_h["volatilidad_anualizada"]))
                     d3.metric("VaR histórico 95%", formato_pct(riesgo_h["var_95_pct"]))
-                    d4.metric(f"Beta vs. {settings.DEFAULT_BENCHMARK}", f"{riesgo_h['beta_cartera']:.2f}" if riesgo_h["beta_cartera"] is not None else "—")
+                    d4.metric(f"Beta vs. {settings.DEFAULT_BENCHMARK}", f"{fmt(riesgo_h['beta_cartera'], ".2f")}" if riesgo_h["beta_cartera"] is not None else "—")
                     st.caption(f"Calculado con datos hasta el {fecha_corte} — sin ver nada posterior a esa fecha.")
 
 # ==================== TAB 2: SIMULADOR ====================
@@ -159,7 +161,7 @@ with tab_simulador:
         st.write("**Compras hipotéticas en este escenario:**")
         for i, t in enumerate(st.session_state["compras_hipoteticas"]):
             c1, c2 = st.columns([5, 1])
-            c1.write(f"+{t.cantidad} {t.ticker} @ ${t.precio:,.2f} ({t.tipo_instrumento.value})")
+            c1.write(f"+{t.cantidad} {t.ticker} @ ${fmt(t.precio, ",.2f")} ({t.tipo_instrumento.value})")
             if c2.button("Quitar", key=f"quitar_{i}"):
                 st.session_state["compras_hipoteticas"].pop(i)
                 st.rerun()
@@ -239,7 +241,7 @@ with tab_simulador:
             estilo = tabla.style
             for fila in tabla.index:
                 formato = "{:.2f}" if fila in (beta, "Correlación promedio") else "{:.1%}"
-                estilo = estilo.format(formato, subset=pd.IndexSlice[[fila], :], na_rep="—")
+                estilo = estilo.format(formato_ar.estilo(formato), subset=pd.IndexSlice[[fila], :], na_rep="—")
             st.dataframe(
                 semaforos.estilar_filas(
                     estilo, {"Volatilidad anualizada": "volatilidad", "Correlación promedio": "correlacion"}

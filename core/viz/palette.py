@@ -18,7 +18,7 @@ BORDER_SOLID = "#1C2E28"
 
 TEXT_PRIMARY = "#EAF6F1"
 TEXT_SECONDARY = "#7C9089"
-TEXT_MUTED = "#4E5F58"
+TEXT_MUTED = "#4E5F58"  # solo líneas/decoración: contraste 2,9:1, NO alcanza para texto (AA pide 4,5:1)
 
 # ---------- Acento de marca ----------
 ACCENT = "#00E8A8"           # verde menta -- KPIs, nav activo, línea principal
@@ -70,6 +70,7 @@ def plotly_layout_defaults(altura: int | None = None) -> dict:
     """Kwargs comunes para fig.update_layout(**...) -- fondo, tipografía y
     grilla consistentes en TODOS los gráficos de la app."""
     layout = {
+        "separators": ",.",  # formato argentino en ejes, etiquetas y tooltips: 1.234,56
         "paper_bgcolor": "rgba(0,0,0,0)",
         "plot_bgcolor": "rgba(0,0,0,0)",
         "font": {"family": FONT_FAMILY, "color": TEXT_SECONDARY, "size": 12},

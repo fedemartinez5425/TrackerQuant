@@ -9,6 +9,7 @@ from core import data_providers
 from core.etl.precios import ultima_corrida
 from core.sistema import version_deploy, versiones_paquetes
 from core.storage import get_backend_status, get_repository
+from core.viz.formato import fmt
 
 require_login()
 
@@ -89,7 +90,7 @@ if c1.button("Probar Yahoo ahora", help="Baja el precio de SPY sin usar el cache
     with st.spinner("Consultando Yahoo…"):
         precio = data_providers.get_price("SPY", use_cache=False)
     if precio:
-        st.toast(f"Yahoo OK: SPY a US$ {precio:,.2f}", icon="✅")
+        st.toast(f"Yahoo OK: SPY a US$ {fmt(precio, ",.2f")}", icon="✅")
     else:
         st.toast("Yahoo no respondió.", icon="⚠️")
     st.rerun()

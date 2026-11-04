@@ -17,6 +17,7 @@ from typing import Callable
 
 import pandas as pd
 
+from core.viz import formato
 from core.viz import palette as p
 
 VERDE, AMARILLO, ROJO = "verde", "amarillo", "rojo"
@@ -133,7 +134,7 @@ def estilar(tabla, reglas: dict[str, str]):
 def tabla(df: pd.DataFrame, formatos: dict[str, str] | None = None, reglas: dict[str, str] | None = None):
     """Styler listo para st.dataframe: formatos y semáforos solo de las
     columnas presentes (así una vista resumida reusa los mismos dicts)."""
-    formatos = {c: f for c, f in (formatos or {}).items() if c in df.columns}
+    formatos = {c: formato.estilo(f) for c, f in (formatos or {}).items() if c in df.columns}
     return estilar(df.style.format(formatos, na_rep="—"), reglas or {})
 
 

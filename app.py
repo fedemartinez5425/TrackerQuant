@@ -23,19 +23,25 @@ setup_logging()
 
 st.set_page_config(
     page_title="Data Finance · Tracker Quant",
-    page_icon="⚠️",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 app_style.inject(st)
 
 # ---------------- Sin sesión: pantalla de login ----------------
-if not st.session_state.get("authentication_status"):
+def _pantalla_login() -> None:
     with st.sidebar:
         app_style.sidebar_header(st)
-    st.title("⚠️ Tracker Quant")
+    st.title("📊 Tracker Quant")
     st.caption("Data Finance · Risk Analytics — CCL, precios e históricos automatizados vía yfinance. Sistema cerrado.")
     render_login()
+
+
+if not st.session_state.get("authentication_status"):
+    # Navegación oculta con una sola página: sin esto Streamlit mostraba el menú
+    # automático de la carpeta pages/ (todas las páginas) en la pantalla de login.
+    st.navigation([st.Page(_pantalla_login, title="Ingresar", icon="🔑")], position="hidden").run()
     st.stop()
 
 username = st.session_state.get("name") or st.session_state.get("username", "usuario")
@@ -47,27 +53,31 @@ with st.sidebar:
     render_logout_button()
     st.divider()
 
-paginas = [
-    st.Page("pages/1_Dashboard.py", title="Dashboard", icon="📊", default=True),
-    st.Page("pages/9_Reporte.py", title="Reporte", icon="📄"),
-    st.Page("pages/2_Cartera.py", title="Cartera", icon="💼"),
-    st.Page("pages/3_Transacciones.py", title="Transacciones", icon="📝"),
-    st.Page("pages/4_Historicos.py", title="Históricos", icon="📈"),
-    st.Page("pages/5_Riesgo.py", title="Riesgo", icon="⚠️"),
-    st.Page("pages/10_Forecasting.py", title="Forecasting", icon="🔮"),
-    st.Page("pages/6_Escenarios.py", title="Escenarios", icon="🕰️"),
-    st.Page("pages/11_Candidatos.py", title="Candidatos", icon="🎯"),
-    st.Page("pages/7_Importar_Broker.py", title="Importar Broker", icon="📥"),
-    st.Page("pages/8_Configuracion.py", title="Configuración", icon="⚙️"),
-    st.Page("pages/12_Estado.py", title="Estado del sistema", icon="🩺"),
-]
-
-with st.sidebar:
-    st.markdown(
-        "<div style='font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;"
-        "color:#7C9089;margin:0 0 4px 2px;'>Módulos</div>",
-        unsafe_allow_html=True,
-    )
+# Menú por secciones, en el orden en que se usa: mirar → cargar → analizar → decidir → ajustar.
+paginas = {
+    "Resumen": [
+        st.Page("pages/1_Dashboard.py", title="Dashboard", icon="📊", default=True),
+        st.Page("pages/9_Reporte.py", title="Reporte", icon="📄"),
+    ],
+    "Mi cartera": [
+        st.Page("pages/2_Cartera.py", title="Posiciones", icon="💼"),
+        st.Page("pages/3_Transacciones.py", title="Transacciones", icon="📝"),
+        st.Page("pages/7_Importar_Broker.py", title="Importar del broker", icon="📥"),
+    ],
+    "Riesgo": [
+        st.Page("pages/5_Riesgo.py", title="Riesgo", icon="🛡️"),
+        st.Page("pages/6_Escenarios.py", title="Escenarios", icon="🕰️"),
+        st.Page("pages/10_Forecasting.py", title="Forecasting", icon="🔮"),
+        st.Page("pages/4_Historicos.py", title="Históricos", icon="📈"),
+    ],
+    "Decidir": [
+        st.Page("pages/11_Candidatos.py", title="Candidatos", icon="🎯"),
+    ],
+    "Ajustes": [
+        st.Page("pages/8_Configuracion.py", title="Configuración", icon="⚙️"),
+        st.Page("pages/12_Estado.py", title="Estado del sistema", icon="🩺"),
+    ],
+}
 
 pg = st.navigation(paginas, position="sidebar")
 

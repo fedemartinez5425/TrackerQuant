@@ -11,13 +11,14 @@ from core.risk.correlation import (
     matriz_correlacion,
 )
 from core.risk.stress_test import beta_ponderado_cartera, betas_por_activo, escenarios_estres
-from core.risk.var import peor_dia_historico, resumen_var_cvar
+from core.risk.var import peor_dia_historico, resumen_var_cvar, var_historico
 from core.risk.volatility import indice_base_100, retorno_diario_cartera, volatilidad_anualizada
 from core.viz import charts, semaforos
+from core.viz.formato import fmt
 
 username = require_login()
 
-st.title("⚠️ Riesgo")
+st.title("🛡️ Riesgo")
 st.caption("Volatilidad, VaR/CVaR, correlación y escenarios de estrés — todo medido en USD equivalente para que CEDEARs y acciones argentinas sean comparables.")
 
 posiciones = obtener_cartera_actual()
@@ -48,12 +49,12 @@ with tab_var:
     c1, c2, c3 = st.columns(3)
     c1.metric(
         "Volatilidad Anualizada",
-        f"{semaforos.senal([semaforos.nivel(vol_anual, 'volatilidad')])} {vol_anual:.1%}" if vol_anual is not None else "—",
-        help=f"🟢 ≤ {semaforos.VOL_MEDIA:.0%} · 🟡 hasta {semaforos.VOL_ALTA:.0%} · 🔴 > {semaforos.VOL_ALTA:.0%}.",
+        f"{semaforos.senal([semaforos.nivel(vol_anual, 'volatilidad')])} {fmt(vol_anual, ".1%")}" if vol_anual is not None else "—",
+        help=f"🟢 ≤ {fmt(semaforos.VOL_MEDIA, ".0%")} · 🟡 hasta {fmt(semaforos.VOL_ALTA, ".0%")} · 🔴 > {fmt(semaforos.VOL_ALTA, ".0%")}.",
     )
-    c2.metric("Retorno diario promedio", f"{retorno_cartera.mean():.3%}" if not retorno_cartera.empty else "—")
+    c2.metric("Retorno diario promedio", f"{fmt(retorno_cartera.mean(), ".3%")}" if not retorno_cartera.empty else "—")
     c3.metric(
-        "Peor día histórico", f"{peor_pct:.2%}" if peor_pct is not None else "—",
+        "Peor día histórico", f"{fmt(peor_pct, ".2%")}" if peor_pct is not None else "—",
         help=f"Ocurrió el {peor_fecha.date() if hasattr(peor_fecha, 'date') else peor_fecha}" if peor_fecha is not None else None,
     )
 
@@ -63,7 +64,7 @@ with tab_var:
 
     st.markdown("##### Distribución de Retornos Diarios")
     if not retorno_cartera.empty:
-        st.plotly_chart(charts.histograma_retornos(retorno_cartera), width="stretch")
+        st.plotly_chart(charts.histograma_retornos(retorno_cartera, var_pct=var_historico(retorno_cartera, 0.95)), width="stretch")
 
     st.divider()
     st.subheader("Value at Risk (VaR) y CVaR (Expected Shortfall)")
@@ -74,14 +75,14 @@ with tab_var:
     filas = resumen_var_cvar(retorno_cartera, resumen["valor_actual_total"])
     df_var = pd.DataFrame(filas)
     st.dataframe(
-        df_var.style.format(
+        semaforos.tabla(
+            df_var,
             {
                 "VaR Histórico %": "{:.2%}",
                 "VaR Histórico $": "$ {:,.2f}",
                 "CVaR (Expected Shortfall) %": "{:.2%}",
                 "CVaR (Expected Shortfall) $": "$ {:,.2f}",
             },
-            na_rep="—",
         ),
         width="stretch",
         hide_index=True,
@@ -105,7 +106,7 @@ with tab_corr:
 
         c1, c2 = st.columns(2)
         def _corr_con_senal(corr):
-            return f"{semaforos.senal([semaforos.nivel(corr, 'correlacion')])} {corr:.2f}" if corr is not None else "—"
+            return f"{semaforos.senal([semaforos.nivel(corr, 'correlacion')])} {fmt(corr, ".2f")}" if corr is not None else "—"
 
         c1.metric("Correlación promedio (simple)", _corr_con_senal(corr_simple))
         c2.metric(
@@ -141,7 +142,7 @@ with tab_estres:
                     width="stretch",
                 )
         with col2:
-            st.metric(f"Beta ponderado vs. {settings.DEFAULT_BENCHMARK}", f"{beta_cartera:.2f}" if beta_cartera is not None else "—")
+            st.metric(f"Beta ponderado vs. {settings.DEFAULT_BENCHMARK}", f"{fmt(beta_cartera, ".2f")}" if beta_cartera is not None else "—")
 
         st.divider()
         st.markdown("##### Escenarios de shock")

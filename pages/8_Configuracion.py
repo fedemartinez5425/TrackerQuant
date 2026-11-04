@@ -7,6 +7,7 @@ from core.cloud_secrets import get_secret
 from core.data_providers.comafi_ratios import actualizar_cache, leer_cache
 from core.storage import get_backend_status, get_repository
 from core.viz import semaforos
+from core.viz.formato import fmt
 
 username = require_login()
 repo = get_repository()
@@ -89,7 +90,7 @@ col1, col2 = st.columns(2)
 col1.write(f"**Benchmark por defecto:** {settings.DEFAULT_BENCHMARK}")
 col1.write(f"**Período histórico:** {settings.HISTORY_PERIOD}")
 col2.write(f"**Cache de precios/CCL:** {settings.PRICE_CACHE_TTL_SECONDS}s")
-col2.write(f"**Escenarios de estrés:** {', '.join(f'{s:.0%}' for s in settings.STRESS_SCENARIOS)}")
+col2.write(f"**Escenarios de estrés:** {', '.join(fmt(s, ".0%") for s in settings.STRESS_SCENARIOS)}")
 st.caption("Estos valores se cambian en el archivo `.env` o en `config/settings.py`.")
 
 st.divider()

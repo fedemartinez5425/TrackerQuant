@@ -1,7 +1,7 @@
 import streamlit as st
 
 from app_helpers import obtener_cartera_actual, obtener_historicos_riesgo, require_login
-from core.viz import charts
+from core.viz import charts, formato
 
 username = require_login()
 
@@ -32,7 +32,7 @@ st.divider()
 st.subheader("Tabla de precios en USD equivalente (últimos 30 días con datos)")
 ultimos = historicos.dropna(how="all").tail(30).sort_index(ascending=False)
 ultimos.index = ultimos.index.strftime("%d/%m/%Y")
-st.dataframe(ultimos.style.format("US$ {:,.2f}", na_rep="—"), width="stretch")
+st.dataframe(ultimos.style.format(formato.estilo("US$ {:,.2f}"), na_rep="—"), width="stretch")
 
 st.caption(
     f"{len(historicos.dropna(how='all'))} días con datos disponibles en el período seleccionado. "

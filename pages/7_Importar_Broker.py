@@ -6,6 +6,7 @@ from core.importers.broker_movimientos import parsear_movimientos_csv
 from core.importers.import_service import importar_candidatos
 from core.importers.portfolio_report import parsear_portfolio_report_csv, reconciliar
 from core.storage import get_repository
+from core.viz.formato import fmt
 
 username = require_login()
 
@@ -141,5 +142,5 @@ with tab_reconciliacion:
         if resultado_report.saldo_efectivo:
             st.caption(
                 "Saldo de efectivo en el broker (no trackeado como posición): "
-                + ", ".join(f"{moneda} {monto:,.2f}" for moneda, monto in resultado_report.saldo_efectivo.items())
+                + ", ".join(f"{moneda} {fmt(monto, ",.2f")}" for moneda, monto in resultado_report.saldo_efectivo.items())
             )

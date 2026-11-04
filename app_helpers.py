@@ -4,6 +4,8 @@ Vive en la raíz (no en core/) porque depende de Streamlit.
 """
 from __future__ import annotations
 
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -19,6 +21,7 @@ from core.portfolio.historicos import (
 from core.portfolio.portfolio_engine import construir_cartera
 from core.storage import get_repository
 from core.storage.models import Instrumento, TipoInstrumento, Transaction, WatchlistItem
+from core.viz import formato
 
 # Tope de combinaciones (tickers, período) cacheadas: en Cloud la RAM es ~1 GB
 # y sin tope cada cartera/período distinto quedaba en memoria para siempre.
@@ -39,6 +42,7 @@ def require_login() -> str:
         st.warning("Necesitás iniciar sesión para ver esta página.")
         st.page_link("app.py", label="⬅️ Ir al login", icon="🔑")
         st.stop()
+    mostrar_aviso_pendiente()
     return st.session_state.get("username") or st.session_state.get("name") or "usuario"
 
 
@@ -160,23 +164,92 @@ def avisar_excluidos(historicos: pd.DataFrame) -> None:
 
 
 def formato_moneda(valor: float | None, moneda: str = "ARS") -> str:
-    if valor is None:
-        return "—"
-    simbolo = "US$" if moneda == "USD" else "$"
-    return f"{simbolo} {valor:,.2f}"
+    """Formato argentino: $ 1.234.567,89 (ver core/viz/formato.py)."""
+    return formato.moneda(valor, moneda)
 
 
 def formato_pct(valor: float | None) -> str:
-    if valor is None:
-        return "—"
-    return f"{valor * 100:,.2f}%"
+    return formato.pct(valor)
 
 
 def mostrar_ccl_sidebar() -> None:
     with st.sidebar:
         ccl = _cached_ccl()
         if ccl:
-            st.metric("CCL (automático)", f"$ {ccl['valor']:,.2f}")
+            st.metric("CCL (automático)", formato.moneda(ccl["valor"]))
             st.caption(f"Fuente: {ccl['fuente']}")
         else:
             st.caption("CCL no disponible en este momento (falló el cálculo automático).")
+
+
+def obtener_impacto_ultima_operacion(posiciones_hoy):
+    """(operación, filas antes/después) de la última compra/venta, o None si
+    no hay operaciones. Ver core/decision/ultima_operacion.py."""
+    from core.decision.ultima_operacion import comparar_riesgo, sin_operacion, ultima_operacion
+    from core.portfolio.portfolio_engine import resumen_cartera
+
+    transacciones = obtener_transacciones()
+    operacion = ultima_operacion(transacciones)
+    if operacion is None:
+        return None
+    posiciones_antes = construir_cartera(sin_operacion(transacciones, operacion), obtener_instrumentos())
+    # Históricos de las dos carteras juntas (una venta total deja un ticker solo en "antes").
+    union = list({p_.ticker: p_ for p_ in posiciones_antes + list(posiciones_hoy)}.values())
+    historicos = obtener_historicos_riesgo(union)
+    filas = comparar_riesgo(
+        historicos,
+        pesos_antes={p_.ticker: p_.peso for p_ in posiciones_antes if p_.peso},
+        pesos_despues={p_.ticker: p_.peso for p_ in posiciones_hoy if p_.peso},
+        valor_antes=resumen_cartera(posiciones_antes)["valor_actual_total"],
+        valor_despues=resumen_cartera(posiciones_hoy)["valor_actual_total"],
+        ticker=operacion.ticker,
+        benchmark=settings.DEFAULT_BENCHMARK,
+    )
+    return operacion, filas
+
+
+def texto_frescura() -> tuple[str, bool]:
+    """Línea 'de cuándo son los precios' para mostrar arriba de los números.
+    Devuelve (texto, hay_alerta)."""
+    estado = data_providers.estado_proveedores()
+    alm = estado["almacen"]
+    base = f"cierre del {alm['ultima_fecha']:%d/%m/%Y} (almacén)" if alm["ultima_fecha"] else None
+    if estado["yahoo_disponible"]:
+        return (f"Precios: {base} + días posteriores en vivo de Yahoo." if base else "Precios: en vivo de Yahoo."), False
+    if base:
+        return f"⚠️ Yahoo no responde: precios al {base}.", True
+    return "⚠️ Yahoo no responde y el almacén está vacío: puede faltar algún precio.", True
+
+
+def mostrar_frescura() -> None:
+    texto, alerta = texto_frescura()
+    clase = "df-frescura df-frescura-alerta" if alerta else "df-frescura"
+    st.markdown(f"<div class='{clase}' role='status'>{html.escape(texto)}</div>", unsafe_allow_html=True)
+
+
+def tarjeta_alerta(severidad: str, texto: str, titulo: str | None = None) -> None:
+    """Alerta con ícono + texto + color (el color nunca es la única señal).
+    severidad: "alto" | "medio" | "bajo"."""
+    icono = {"alto": "🔴", "medio": "🟡", "bajo": "🟢"}.get(severidad, "ℹ️")
+    etiqueta = {"alto": "Atención", "medio": "Para mirar", "bajo": "Bien"}.get(severidad, "Info")
+    cuerpo = (f"<b>{html.escape(titulo)}</b> — " if titulo else "") + html.escape(texto)
+    st.markdown(
+        f"<div class='df-alerta df-alerta-{severidad}' role='note' aria-label='{etiqueta}'>"
+        f"<span class='df-alerta-icono' aria-hidden='true'>{icono}</span><div>{cuerpo}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+_CLAVE_AVISO = "_aviso_pendiente"
+
+
+def avisar_despues_del_rerun(texto: str, icono: str = "✅") -> None:
+    """Un st.success seguido de st.rerun() nunca se llega a ver: se guarda
+    acá y se muestra como toast en la próxima corrida (ver require_login)."""
+    st.session_state[_CLAVE_AVISO] = (texto, icono)
+
+
+def mostrar_aviso_pendiente() -> None:
+    aviso = st.session_state.pop(_CLAVE_AVISO, None)
+    if aviso:
+        st.toast(aviso[0], icon=aviso[1])

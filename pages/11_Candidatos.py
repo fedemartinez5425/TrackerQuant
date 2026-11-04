@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from app_helpers import (
+    avisar_despues_del_rerun,
     formato_moneda,
     formato_pct,
     invalidar_caches,
@@ -25,6 +26,8 @@ from core.portfolio.portfolio_engine import resumen_cartera
 from core.storage import get_repository
 from core.storage.models import AuditEvent, TipoInstrumento, WatchlistItem
 from core.viz import semaforos
+from core.viz import formato as formato_ar
+from core.viz.formato import fmt
 
 username = require_login()
 mostrar_ccl_sidebar()
@@ -33,7 +36,7 @@ st.title("🎯 Candidatos")
 st.caption(
     f"Qué pasaría con la cartera si sumás un activo de tu watchlist. Todo en USD equivalente, "
     f"con {settings.HISTORY_PERIOD_DECISION} de historia y tasa libre de riesgo de "
-    f"{settings.RISK_FREE_RATE:.1%} anual."
+    f"{fmt(settings.RISK_FREE_RATE, ".1%")} anual."
 )
 st.warning(
     "**Ojo con el sesgo de supervivencia:** esto es un backtest. Los candidatos que mirás "
@@ -61,7 +64,7 @@ with col_alta:
             help="X CEDEARs = 1 ADR. Si lo dejás en 0 se busca en el listado de Comafi.",
         )
         notas = st.text_input("Notas", placeholder="Por qué lo estás mirando")
-        if st.form_submit_button("Agregar", type="primary"):
+        if st.form_submit_button("Agregar a la watchlist", type="primary"):
             try:
                 es_cedear = tipo == TipoInstrumento.CEDEAR.value
                 item = WatchlistItem(
@@ -97,9 +100,10 @@ with col_lista:
             hide_index=True,
         )
         a_borrar = st.selectbox("Sacar de la watchlist", [i.ticker for i in watchlist])
-        if st.button("Sacar"):
+        if st.button("Sacar de la watchlist"):
             if repo.remove_watchlist_item(a_borrar):
                 repo.add_audit_event(AuditEvent(usuario=username, accion="BAJA_WATCHLIST", detalle=a_borrar))
+                avisar_despues_del_rerun(f"{a_borrar} salió de la watchlist.", "🗑️")
             invalidar_caches()
             st.rerun()
     else:
@@ -166,8 +170,8 @@ for pestania, columnas in zip(st.tabs(list(GRUPOS_METRICAS)), GRUPOS_METRICAS.va
             semaforos.tabla(tabla[["Rol"] + columnas], FORMATOS_METRICAS, REGLAS_METRICAS), width="stretch"
         )
 st.caption(
-    f"{semaforos.LEYENDA}. Vol: 🟡 > {semaforos.VOL_MEDIA:.0%}, 🔴 > {semaforos.VOL_ALTA:.0%}. "
-    f"Max DD: 🟡 peor que {semaforos.DD_MEDIO:.0%}, 🔴 peor que {semaforos.DD_ALTO:.0%}. "
+    f"{semaforos.LEYENDA}. Vol: 🟡 > {fmt(semaforos.VOL_MEDIA, ".0%")}, 🔴 > {fmt(semaforos.VOL_ALTA, ".0%")}. "
+    f"Max DD: 🟡 peor que {fmt(semaforos.DD_MEDIO, ".0%")}, 🔴 peor que {fmt(semaforos.DD_ALTO, ".0%")}. "
     f"RSI: 🔴 fuera de {semaforos.RSI_SOBREVENDIDO}–{semaforos.RSI_SOBRECOMPRADO} (sobrevendido / sobrecomprado). "
     "Rendimiento y momentum: verde si es positivo."
 )
@@ -264,7 +268,7 @@ else:
     comparacion = pd.DataFrame(
         {
             "Actual": [detalle["antes"].get(k) for k in claves],
-            f"Con {elegido} al {peso_objetivo:.0%}": [detalle["despues"].get(k) for k in claves],
+            f"Con {elegido} al {fmt(peso_objetivo, ".0%")}": [detalle["despues"].get(k) for k in claves],
         },
         index=[COLUMNAS_METRICAS[k] for k in claves],
     )
@@ -272,8 +276,8 @@ else:
     estilo = comparacion.style
     for fila in comparacion.index:
         formato = "{:.2f}" if fila in NO_PCT else "{:.2%}"
-        estilo = estilo.format(formato, subset=pd.IndexSlice[[fila], comparacion.columns[:2]], na_rep="—")
-        estilo = estilo.format("{:+" + formato[2:], subset=pd.IndexSlice[[fila], ["Δ"]], na_rep="—")
+        estilo = estilo.format(formato_ar.estilo(formato), subset=pd.IndexSlice[[fila], comparacion.columns[:2]], na_rep="—")
+        estilo = estilo.format(formato_ar.estilo("{:+" + formato[2:]), subset=pd.IndexSlice[[fila], ["Δ"]], na_rep="—")
     reglas_delta = {f: ("signo_inverso" if f.startswith("Vol") else "signo") for f in comparacion.index}
     st.dataframe(semaforos.estilar_filas(estilo, reglas_delta, columnas=["Δ"]), width="stretch")
     corr = detalle["corr_posiciones"]

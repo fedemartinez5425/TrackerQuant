@@ -3,6 +3,7 @@ import streamlit as st
 from app_helpers import formato_moneda, formato_pct, mostrar_ccl_sidebar, obtener_cartera_actual, require_login
 from core.portfolio.portfolio_engine import cartera_a_dataframe, resumen_cartera
 from core.viz import charts, semaforos
+from core.viz.formato import fmt
 
 FORMATOS_CARTERA = {
     "Cantidad": "{:,.4f}",
@@ -70,20 +71,21 @@ with col_tabla:
         column_config={
             "Peso %": st.column_config.ProgressColumn(
                 "Peso %", min_value=0.0, max_value=1.0, format="percent",
-                help=f"🟡 más de {semaforos.PESO_MEDIO:.0%} · 🔴 más de {semaforos.PESO_ALTO:.0%} de la cartera.",
+                help=f"🟡 más de {fmt(semaforos.PESO_MEDIO, ".0%")} · 🔴 más de {fmt(semaforos.PESO_ALTO, ".0%")} de la cartera.",
             ),
         },
     )
     st.caption(
-        f"{semaforos.LEYENDA}. Señal = riesgo de la posición: peso (🟡 > {semaforos.PESO_MEDIO:.0%}, "
-        f"🔴 > {semaforos.PESO_ALTO:.0%}) y prima del CEDEAR vs. su teórico (🟡 > ±{semaforos.PRIMA_MEDIA:.0%}, "
-        f"🔴 > ±{semaforos.PRIMA_ALTA:.0%}). G/P en verde o rojo según gane o pierda."
+        f"{semaforos.LEYENDA}. Señal = riesgo de la posición: peso (🟡 > {fmt(semaforos.PESO_MEDIO, ".0%")}, "
+        f"🔴 > {fmt(semaforos.PESO_ALTO, ".0%")}) y prima del CEDEAR vs. su teórico (🟡 > ±{fmt(semaforos.PRIMA_MEDIA, ".0%")}, "
+        f"🔴 > ±{fmt(semaforos.PRIMA_ALTA, ".0%")}). G/P en verde o rojo según gane o pierda."
     )
 
 with col_donut:
     pesos = {p.ticker: p.peso for p in posiciones if p.peso}
     if pesos:
-        st.plotly_chart(charts.donut_exposicion(pesos), width="stretch")
+        st.plotly_chart(charts.donut_exposicion(pesos, umbral_alerta=semaforos.PESO_ALTO), width="stretch")
+        st.caption(f"En rojo: posiciones de más de {fmt(semaforos.PESO_ALTO, '.0%')} de la cartera.")
 
 with st.expander("¿Cómo se calcula esto? (todo automático, sin cargar nada a mano)"):
     st.markdown(

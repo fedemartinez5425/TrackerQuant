@@ -51,8 +51,10 @@ def entorno(tmp_path, monkeypatch):
     from config.settings import settings
     import core.storage as storage
 
-    for nombre in ("TRANSACTIONS", "AUDIT_LOG", "SNAPSHOTS", "INSTRUMENTOS", "PROCESSED_FILES", "FORECASTS", "WATCHLIST"):
-        monkeypatch.setattr(settings, f"{nombre}_FILE", tmp_path / f"{nombre.lower()}.csv")
+    # TODOS los archivos de datos a tmp (una lista a mano dejó afuera PRECIOS_FILE y
+    # el test del ETL escribió precios sintéticos en el data/ real).
+    for nombre in [a for a in dir(type(settings)) if a.endswith("_FILE")]:
+        monkeypatch.setattr(settings, nombre, tmp_path / f"{nombre.lower()}.csv")
     # Nunca Google Sheets en tests, aunque haya secrets locales.
     monkeypatch.setattr(storage, "get_secret", lambda ruta, default=None: "csv" if ruta == ["storage_backend"] else default)
     storage.reset_repository_cache()

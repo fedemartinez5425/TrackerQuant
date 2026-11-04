@@ -99,7 +99,7 @@ p, span, label, li, div {{ color: var(--text-primary); }}
 }}
 .df-footer-signature {{
     font-family: 'Inter', sans-serif;
-    font-size: 0.7rem;
+    font-size: 0.78rem;
     color: var(--text-secondary);
     text-align: center;
     line-height: 1.5;
@@ -121,8 +121,8 @@ p, span, label, li, div {{ color: var(--text-primary); }}
     font-family: 'Inter', sans-serif;
     font-weight: 600;
     color: var(--text-secondary) !important;
-    font-size: 0.72rem;
-    letter-spacing: 0.08em;
+    font-size: 0.8rem;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
 }}
 [data-testid="stMetricValue"] {{
@@ -194,6 +194,28 @@ button[kind="primary"]:hover {{ filter: brightness(1.1); }}
 [data-testid="stExpander"] {{ background: var(--bg-panel); border: 1px solid var(--border-solid); border-radius: 10px; }}
 [data-testid="stAlert"] {{ border-radius: 10px; border-width: 1px; border-style: solid; }}
 hr {{ border-color: var(--border-solid) !important; }}
+
+/* ---------- Accesibilidad: foco visible al navegar con teclado ---------- */
+a:focus-visible, button:focus-visible, [role="tab"]:focus-visible,
+input:focus-visible, textarea:focus-visible, [data-baseweb="select"]:focus-within {{
+    outline: 2px solid var(--accent) !important;
+    outline-offset: 2px;
+}}
+
+/* ---------- Tarjetas de alerta (dato + texto, nunca solo color) ---------- */
+.df-alerta {{
+    display: flex; gap: 0.6rem; align-items: flex-start;
+    border: 1px solid var(--border-solid); border-left-width: 4px;
+    border-radius: 10px; padding: 0.65rem 0.9rem; margin: 0 0 0.5rem 0;
+    background: var(--bg-panel); font-size: 0.95rem; line-height: 1.45;
+}}
+.df-alerta-alto {{ border-left-color: var(--danger); background: rgba(255, 92, 108, 0.08); }}
+.df-alerta-medio {{ border-left-color: var(--warning); background: rgba(255, 194, 75, 0.06); }}
+.df-alerta-bajo {{ border-left-color: var(--success); }}
+.df-alerta-icono {{ font-size: 1rem; line-height: 1.45; }}
+.df-alerta b {{ color: var(--text-primary); }}
+.df-frescura {{ font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-secondary); }}
+.df-frescura-alerta {{ color: var(--warning); }}
 
 /* ---------- Chrome de Streamlit ---------- */
 footer {{ visibility: hidden; }}

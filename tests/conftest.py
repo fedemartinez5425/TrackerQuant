@@ -46,3 +46,17 @@ def _proveedores_sin_red(monkeypatch):
     data_providers.limpiar_cache()
     yield
     data_providers.limpiar_cache()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _data_real_intacta():
+    """Red de seguridad: ningún test puede crear ni modificar archivos en data/."""
+    from config.settings import settings
+
+    def foto():
+        return {p.name: p.stat().st_mtime_ns for p in settings.DATA_DIR.glob("*.csv")}
+
+    antes = foto()
+    yield
+    cambios = {k for k in set(antes) | set(foto()) if antes.get(k) != foto().get(k)}
+    assert not cambios, f"Los tests modificaron data/: {sorted(cambios)}"

@@ -3,7 +3,13 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from app_helpers import invalidar_caches, obtener_instrumentos, obtener_transacciones, require_login
+from app_helpers import (
+    avisar_despues_del_rerun,
+    invalidar_caches,
+    obtener_instrumentos,
+    obtener_transacciones,
+    require_login,
+)
 from config.settings import settings
 from core import data_providers
 from core.data_providers.comafi_ratios import obtener_ratio
@@ -18,6 +24,7 @@ from core.storage.models import (
     ids_reversados,
 )
 from core.validation.schemas import validar_transaccion_completa
+from core.viz.formato import fmt
 
 username = require_login()
 
@@ -160,7 +167,7 @@ Ticker `NU` · CEDEAR · ticker en EEUU `NU` · ratio `2` · Cantidad `2` · Pre
                 help="Solo si la app te avisó que parece repetida y de verdad hiciste dos operaciones iguales.",
             )
             notas = st.text_area("Notas (opcional)", "")
-            enviado = st.form_submit_button("Validar y cargar transacción", type="primary")
+            enviado = st.form_submit_button("Guardar transacción", type="primary", help="Valida los datos antes de guardar.")
 
         if enviado:
             errores_previos = []
@@ -203,7 +210,10 @@ Ticker `NU` · CEDEAR · ticker en EEUU `NU` · ratio `2` · Cantidad `2` · Pre
                                 detalle=f"{nueva.accion.value} {nueva.cantidad} {nueva.ticker} @ {nueva.precio}",
                             )
                         )
-                        st.success(f"Transacción cargada: {nueva.accion.value} {nueva.cantidad} {nueva.ticker} @ {nueva.precio}")
+                        avisar_despues_del_rerun(
+                            f"{nueva.accion.value.capitalize()} guardada: {fmt(nueva.cantidad, 'g')} {nueva.ticker} a "
+                            f"{fmt(nueva.precio, ',.2f')}. Mirá el impacto en el riesgo en el Dashboard."
+                        )
                         invalidar_caches()
                         st.rerun()
 
@@ -248,11 +258,11 @@ Ticker `NU` · CEDEAR · ticker en EEUU `NU` · ratio `2` · Cantidad `2` · Pre
             hide_index=True,
             column_config={
                 "Fecha": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                "Cantidad": st.column_config.NumberColumn(format="%g"),
-                "Precio": st.column_config.NumberColumn(format="%.2f"),
-                "Comisión": st.column_config.NumberColumn(format="%.2f"),
+                "Cantidad": st.column_config.NumberColumn(format="localized"),
+                "Precio": st.column_config.NumberColumn(format="localized"),
+                "Comisión": st.column_config.NumberColumn(format="localized"),
                 "Total": st.column_config.NumberColumn(
-                    format="%.2f", help="Cantidad × precio, más la comisión en compras (menos en ventas). En la moneda de la fila."
+                    format="localized", help="Cantidad × precio, más la comisión en compras (menos en ventas). En la moneda de la fila."
                 ),
                 "ID": st.column_config.TextColumn(help="Identificador interno: lo vas a ver al reversar."),
             },
@@ -266,7 +276,7 @@ Ticker `NU` · CEDEAR · ticker en EEUU `NU` · ratio `2` · Cantidad `2` · Pre
         )
         reversables = [t for t in sorted(transacciones, key=lambda x: x.fecha, reverse=True) if not t.revierte_a and t.id not in anuladas]
         etiquetas = {
-            t.id: f"{t.id} · {t.fecha} · {t.accion.value} {t.cantidad:g} {t.ticker} @ {t.precio:,.2f}" for t in reversables
+            t.id: f"{t.id} · {t.fecha} · {t.accion.value} {t.cantidad:g} {t.ticker} @ {fmt(t.precio, ",.2f")}" for t in reversables
         }
         col1, col2 = st.columns([1, 2])
         with col1:
@@ -276,19 +286,27 @@ Ticker `NU` · CEDEAR · ticker en EEUU `NU` · ratio `2` · Cantidad `2` · Pre
             )
         with col2:
             motivo = st.text_input("Motivo del reverso")
-        if st.button("Reversar transacción"):
-            if not id_a_reversar:
-                st.error("Elegí qué transacción reversar.")
-            elif not motivo:
-                st.error("Indicá un motivo para el reverso (queda en el registro de auditoría).")
-            else:
+        @st.dialog("¿Reversar esta transacción?")
+        def _confirmar_reverso(id_: str, motivo_: str) -> None:
+            st.write(f"**{etiquetas[id_]}**")
+            st.write(f"Motivo: {motivo_}")
+            st.caption("No se puede deshacer: el reverso queda en el historial y la original deja de contar.")
+            c_si, c_no = st.columns(2)
+            if c_si.button("Sí, reversar", type="primary", width="stretch"):
                 try:
-                    repo.add_reversal(id_a_reversar, motivo, usuario=username)
-                    st.success("Reverso cargado correctamente.")
-                    invalidar_caches()
-                    st.rerun()
+                    repo.add_reversal(id_, motivo_, usuario=username)
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"No se pudo reversar: {exc}")
+                    return
+                avisar_despues_del_rerun("Reverso guardado: la transacción ya no cuenta para la cartera.", "↩️")
+                invalidar_caches()
+                st.rerun()
+            if c_no.button("Cancelar", width="stretch"):
+                st.rerun()
+
+        if st.button("Reversar transacción…", disabled=not (id_a_reversar and motivo),
+                     help="Elegí la transacción y escribí el motivo para habilitarlo."):
+            _confirmar_reverso(id_a_reversar, motivo)
 
 # ==================== TAB 2: INSTRUMENTOS (tabla dimensión) ====================
 with tab_instrumentos:

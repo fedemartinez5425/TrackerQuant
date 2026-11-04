@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from core.viz.formato import fmt
 
 
 @dataclass
@@ -33,7 +34,7 @@ def _evaluar_volatilidad(vol: float | None) -> Insight | None:
     if vol > 0.40:
         return Insight(
             "alto", "Volatilidad",
-            f"Volatilidad anualizada muy alta ({vol:.1%}, umbral de alerta: 40%).",
+            f"Volatilidad anualizada muy alta ({fmt(vol, ".1%")}, umbral de alerta: 40%).",
             "Priorizar research en empresas de alta capitalización, flujo de caja estable y "
             "sectores defensivos (consumo masivo, salud, utilities) para bajar la volatilidad "
             "total sin salir del mercado. Evitar sumar más nombres de alta beta o small caps.",
@@ -41,11 +42,11 @@ def _evaluar_volatilidad(vol: float | None) -> Insight | None:
     if vol > 0.25:
         return Insight(
             "medio", "Volatilidad",
-            f"Volatilidad anualizada moderada-alta ({vol:.1%}).",
+            f"Volatilidad anualizada moderada-alta ({fmt(vol, ".1%")}).",
             "Vigilar de cerca las posiciones más volátiles; no es urgente reducir, pero conviene "
             "evaluar si el nivel de riesgo sigue alineado con tu horizonte de inversión.",
         )
-    return Insight("bajo", "Volatilidad", f"Volatilidad anualizada controlada ({vol:.1%}).", "Nivel razonable — no requiere acción.")
+    return Insight("bajo", "Volatilidad", f"Volatilidad anualizada controlada ({fmt(vol, ".1%")}).", "Nivel razonable — no requiere acción.")
 
 
 def _evaluar_concentracion(concentracion_top2: float | None, contribucion) -> Insight | None:
@@ -55,7 +56,7 @@ def _evaluar_concentracion(concentracion_top2: float | None, contribucion) -> In
     if concentracion_top2 > 0.75:
         return Insight(
             "alto", "Concentración",
-            f"El {concentracion_top2:.0%} del riesgo total viene de solo 2 posiciones" + (f" ({top2_nombres})" if top2_nombres else "") + ".",
+            f"El {fmt(concentracion_top2, ".0%")} del riesgo total viene de solo 2 posiciones" + (f" ({top2_nombres})" if top2_nombres else "") + ".",
             f"Considerar reducir el tamaño de {top2_nombres or 'tus posiciones más grandes'} y "
             "redistribuir hacia activos con baja correlación frente a ellas, para que ningún "
             "evento idiosincrático de una sola empresa/sector pese tanto en el resultado total.",
@@ -63,7 +64,7 @@ def _evaluar_concentracion(concentracion_top2: float | None, contribucion) -> In
     if concentracion_top2 > 0.55:
         return Insight(
             "medio", "Concentración",
-            f"El {concentracion_top2:.0%} del riesgo total se concentra en 2 posiciones" + (f" ({top2_nombres})" if top2_nombres else "") + ".",
+            f"El {fmt(concentracion_top2, ".0%")} del riesgo total se concentra en 2 posiciones" + (f" ({top2_nombres})" if top2_nombres else "") + ".",
             "Concentración moderada — hay margen para diversificar un poco más si el objetivo es bajar riesgo idiosincrático.",
         )
     return Insight("bajo", "Concentración", "El riesgo está razonablemente repartido entre posiciones.", "Nivel de diversificación adecuado.")
@@ -75,7 +76,7 @@ def _evaluar_correlacion(corr: float | None) -> Insight | None:
     if corr > 0.7:
         return Insight(
             "alto", "Correlación",
-            f"Correlación promedio ponderada alta ({corr:.2f}) — tus posiciones tienden a moverse juntas.",
+            f"Correlación promedio ponderada alta ({fmt(corr, ".2f")}) — tus posiciones tienden a moverse juntas.",
             "Buscar activos con correlación histórica baja o negativa frente al resto de la cartera: "
             "otros sectores, otra geografía, o activos con drivers distintos (ej. si la cartera es "
             "tech-heavy, mirar consumo defensivo o salud; si es todo Argentina, mirar diversificar moneda/geografía).",
@@ -83,10 +84,10 @@ def _evaluar_correlacion(corr: float | None) -> Insight | None:
     if corr > 0.4:
         return Insight(
             "medio", "Correlación",
-            f"Correlación promedio ponderada moderada ({corr:.2f}).",
+            f"Correlación promedio ponderada moderada ({fmt(corr, ".2f")}).",
             "Diversificación aceptable, pero hay margen para bajar la correlación entre tus posiciones más grandes.",
         )
-    return Insight("bajo", "Correlación", f"Correlación promedio ponderada baja ({corr:.2f}) — buena diversificación real.", "Mantener el criterio actual de selección.")
+    return Insight("bajo", "Correlación", f"Correlación promedio ponderada baja ({fmt(corr, ".2f")}) — buena diversificación real.", "Mantener el criterio actual de selección.")
 
 
 def _evaluar_beta(beta: float | None, benchmark: str) -> Insight | None:
@@ -95,7 +96,7 @@ def _evaluar_beta(beta: float | None, benchmark: str) -> Insight | None:
     if beta > 1.2:
         return Insight(
             "alto", "Beta / Sensibilidad al mercado",
-            f"Beta de {beta:.2f} vs. {benchmark}: la cartera amplifica los movimientos del mercado.",
+            f"Beta de {fmt(beta, ".2f")} vs. {benchmark}: la cartera amplifica los movimientos del mercado.",
             "Si el objetivo es bajar riesgo sistemático, priorizar research en acciones de beta bajo "
             "(<0.8) — históricamente sectores no cíclicos (utilities, consumo defensivo, salud) o "
             "empresas maduras con ingresos más predecibles.",
@@ -103,10 +104,10 @@ def _evaluar_beta(beta: float | None, benchmark: str) -> Insight | None:
     if beta < 0.7:
         return Insight(
             "info", "Beta / Sensibilidad al mercado",
-            f"Beta de {beta:.2f} vs. {benchmark}: cartera defensiva, poco sensible al mercado.",
+            f"Beta de {fmt(beta, ".2f")} vs. {benchmark}: cartera defensiva, poco sensible al mercado.",
             "Coherente si buscás estabilidad; tené en cuenta que también vas a captar menos si el mercado sube fuerte.",
         )
-    return Insight("bajo", "Beta / Sensibilidad al mercado", f"Beta de {beta:.2f} vs. {benchmark}: en línea con el mercado.", "Nivel razonable.")
+    return Insight("bajo", "Beta / Sensibilidad al mercado", f"Beta de {fmt(beta, ".2f")} vs. {benchmark}: en línea con el mercado.", "Nivel razonable.")
 
 
 def _evaluar_cola_perdidas(var_95: float | None, cvar_95: float | None) -> Insight | None:
@@ -116,7 +117,7 @@ def _evaluar_cola_perdidas(var_95: float | None, cvar_95: float | None) -> Insig
     if ratio > 1.5:
         return Insight(
             "medio", "Riesgo de cola",
-            f"El CVaR (Expected Shortfall) es {ratio:.1f}x el VaR — cuando hay un mal día, suele ser bastante peor que el límite típico.",
+            f"El CVaR (Expected Shortfall) es {fmt(ratio, ".1f")}x el VaR — cuando hay un mal día, suele ser bastante peor que el límite típico.",
             "Revisar si hay posiciones con historial de saltos abruptos (small caps, alta volatilidad "
             "idiosincrática, baja liquidez) que expliquen esa cola pesada, y considerar acotarlas.",
         )
@@ -137,7 +138,7 @@ def _evaluar_contribucion_desproporcionada(posiciones, contribucion) -> list[Ins
             insights.append(
                 Insight(
                     "medio", "Contribución desproporcionada",
-                    f"{p.ticker} pesa {p.peso:.1%} de la cartera pero aporta {contrib_pct:.1%} del riesgo total.",
+                    f"{p.ticker} pesa {fmt(p.peso, ".1%")} de la cartera pero aporta {fmt(contrib_pct, ".1%")} del riesgo total.",
                     f"Candidato a revisar/recortar: {p.ticker} está aportando más riesgo del que su "
                     "tamaño sugiere (suele pasar con activos muy volátiles o muy correlacionados con el resto).",
                 )
@@ -176,7 +177,7 @@ def generar_reporte_markdown(riesgo: dict, posiciones: list, resumen_cartera: di
         f"# Reporte de Riesgo de Cartera — {date.today().isoformat()}",
         "",
         f"**Semáforo general:** {riesgo.get('semaforo', '—')}  ",
-        f"**Valor de cartera:** $ {resumen_cartera.get('valor_actual_total', 0):,.2f}  ",
+        f"**Valor de cartera:** $ {fmt(resumen_cartera.get('valor_actual_total', 0), ",.2f")}  ",
         f"**Posiciones:** {resumen_cartera.get('cantidad_posiciones', 0)}  ",
         f"**Volatilidad anualizada:** {_pct(riesgo.get('volatilidad_anualizada'))}  ",
         f"**VaR histórico 95%:** {_pct(riesgo.get('var_95_pct'))} · **CVaR 95%:** {_pct(riesgo.get('cvar_95_pct'))}  ",
@@ -244,8 +245,8 @@ def _sintetizar_criterios_busqueda(insights: list[Insight]) -> str:
 
 
 def _pct(v: float | None) -> str:
-    return f"{v:.2%}" if v is not None else "—"
+    return f"{fmt(v, ".2%")}" if v is not None else "—"
 
 
 def _num(v: float | None) -> str:
-    return f"{v:.2f}" if v is not None else "—"
+    return f"{fmt(v, ".2f")}" if v is not None else "—"
