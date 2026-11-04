@@ -37,43 +37,70 @@ no recomienda comprar nada, muestra el impacto cuantitativo y advierte que es un
 
 ```powershell
 .venv\Scripts\Activate.ps1          # si falla: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-pip install -r requirements.txt
+pip install -r requirements-dev.txt  # = requirements.txt (versiones exactas) + pytest + pyflakes
 streamlit run app.py                 # local usa CSV en data/ salvo que haya secrets de gsheets
-pytest -q tests                      # 112 tests, sin red (todo mockeado)
-python -m pyflakes core pages        # pyflakes está en el venv, no en requirements.txt
+pytest -q tests                      # 176 tests, sin red (incluye smoke test de todas las páginas)
+python -m pyflakes app.py app_helpers.py app_style.py core pages scripts
+python scripts/etl_precios.py --dry-run   # ETL contra Yahoo real, sin escribir nada
 ```
 
-Los tests **no deben salir a internet** (`tests/conftest.py` desactiva la descarga de Comafi).
-Todo cambio de lógica en `core/` va con su test.
+Los tests **no deben salir a internet** (`tests/conftest.py` reemplaza Yahoo/Alpha Vantage por un
+proveedor sin red y desactiva la descarga de Comafi) **ni tocar `data/`** (una guarda en
+`conftest.py` falla si algún test crea o modifica un CSV ahí; el smoke test redirige todos los
+`settings.*_FILE` a `tmp_path`). Todo cambio de lógica en `core/` va con su test.
+
+**Dependencias**: `requirements.txt` tiene versiones **exactas** (`==`, es lo que instala Cloud);
+las directas con rangos están en `requirements.in`. Para actualizar: `pip install -U -r
+requirements.in`, `pip freeze > requirements.txt` (sacar pytest/pyflakes/iniconfig/pluggy), tests
+en verde y recién ahí commitear. Nunca dejar una dependencia sin fijar: un deploy instalaba
+versiones nuevas solo y rompía la app (spinner infinito, componentes que no cargaban).
 
 ## Arquitectura
 
 ```
-app.py                  entry point: st.navigation(), login, banner si Sheets cayó a CSV
-app_helpers.py          helpers de UI + caches (st.cache_data) + invalidar_caches()
-pages/                  11 páginas (Dashboard, Reporte, Cartera, Transacciones, Históricos,
-                        Riesgo, Forecasting, Escenarios, Candidatos, Importar Broker, Configuración)
+app.py                  entry point: st.navigation() por secciones (Resumen, Mi cartera, Riesgo,
+                        Decidir, Ajustes), login con navegación oculta, banner si Sheets cayó a
+                        CSV, configurar_almacen() y aislador de errores alrededor de pg.run()
+app_helpers.py          helpers de UI + caches (st.cache_data, max_entries) + invalidar_caches() ·
+                        impacto de la última operación · frescura de precios · tarjeta_alerta ·
+                        avisar_despues_del_rerun (toast que sobrevive a st.rerun)
+pages/                  12 páginas (Dashboard, Reporte, Cartera, Transacciones, Históricos,
+                        Riesgo, Forecasting, Escenarios, Candidatos, Importar Broker, Configuración,
+                        Estado del sistema)
+scripts/                generar_credenciales · etl_precios (lo corre GitHub Actions) · uptime (Playwright)
+.github/workflows/      tests.yml (push) · etl-diario.yml (L-V 22:30 UTC) · uptime.yml (cada 6 h).
+                        Puesta en marcha y secrets: docs/GITHUB_ACTIONS.md
 core/storage/           models.py (Pydantic) · base_repository.py · csv_repository.py ·
                         sheets_repository.py · __init__.py (factory get_repository())
 core/portfolio/         portfolio_engine.py (tenencias, costo promedio) · historicos.py
-                        (USD equivalente + alinear_dias_comunes) · attribution.py (MCTR)
+                        (USD equivalente, tickers_de_mercado, matriz_riesgo, alinear_dias_comunes) ·
+                        attribution.py (MCTR) · snapshot.py (armar_snapshot, lo usan Dashboard y ETL)
 core/risk/              volatility, var, correlation, stress_test, summary
 core/performance/       metrics.py (CAGR, Sharpe, Sortino, drawdown, momentum, SMA, RSI; por
                         activo y para la cartera con pesos constantes)
 core/decision/          candidatos.py (impacto de sumar un candidato, ranking, precio de 1
-                        unidad en ARS, peso de 1 unidad)
+                        unidad en ARS, peso de 1 unidad) · ultima_operacion.py (riesgo antes/
+                        después de la última compra/venta + lectura en texto llano)
 core/forecasting/       volatility_garch (GARCH-t) · returns_forecast (cono) · backtest
-core/data_providers/    yfinance + Alpha Vantage con cache en memoria · ccl_provider · comafi_ratios
+core/data_providers/    __init__ (cadena yfinance → Alpha Vantage, cache por ticker, precargar() en
+                        lote, cortacircuito) · yfinance_client (timeout, yf.download) · almacen
+                        (pestaña precios en memoria) · calidad (controles del ETL) · ccl_provider ·
+                        comafi_ratios
+core/etl/               precios.py (ETL diario: universo, extracción en lote, calidad, carga,
+                        snapshot automático, auditoría)
+core/sistema.py         versión deployada (lee .git) y versiones de paquetes, para Estado del sistema
 core/importers/         broker_movimientos (CSV ';' formato AR) · import_service · drive_sync · portfolio_report
 core/insights/          rules_engine (reglas determinísticas -> reporte Markdown)
 core/viz/               palette (colores, fuente única) · charts (Plotly) · semaforos (umbrales
-                        🟢🟡🔴 + pandas Styler para st.dataframe)
+                        🟢🟡🔴 + pandas Styler para st.dataframe) · formato (números en formato AR)
 core/auth/              streamlit-authenticator; fail-closed en Cloud
 ```
 
 Pestañas de Sheets / CSV en `data/`: `instrumentos`, `transactions`, `portfolio_snapshots`,
 `forecast_log`, `processed_files`, `audit_log`, `watchlist` (candidatos fuera de cartera:
-ticker, tipo, ADR, ratio opcional, notas; independiente de `instrumentos`).
+ticker, tipo, ADR, ratio opcional, notas; independiente de `instrumentos`), `precios` (almacén de
+cierres diarios en formato largo: fecha, ticker de yfinance, close, fuente, actualizado_en; la
+reescribe entera el ETL, la app solo la lee).
 
 Las páginas no deben tener lógica de negocio: llaman a `core/`. `core/` no importa Streamlit
 (salvo `core/auth` y `core/cloud_secrets.py`).
@@ -95,7 +122,24 @@ Las páginas no deben tener lógica de negocio: llaman a `core/`. `core/` no imp
 - **CCL** = mediana de los pares de `settings.CCL_PARES` (GGAL 10:1, YPFD 1:1, PAMP 25:1).
 - **Forecast GARCH(1,1) con dist t.** Se guarda `vol_horizonte` (raíz del promedio de varianzas del
   horizonte), no la del día N. El cono acumula varianzas diarias.
-- **Caches**: históricos en memoria (`PRICE_CACHE_TTL_SECONDS`, 15 min) + `st.cache_data`;
+- **Datos de mercado (data engineering)**: la app NO baja la historia de Yahoo en cada visita.
+  - Fuente principal = pestaña `precios`, que llena el ETL diario (`scripts/etl_precios.py`, GitHub
+    Actions). Baja la ventana completa todos los días (no incremental: Yahoo ajusta el pasado por
+    dividendos/splits). Guarda `HISTORY_PERIOD_BASE` (3y) por ticker y 5y para los pares del CCL.
+    No pisa el almacén si trae menos del 50% de los tickers que había.
+  - La app lee el almacén (`almacen.configurar(repo.list_precios)`, relectura cada 15 min) y a
+    Yahoo solo le pide los días posteriores al último cierre guardado (`PERIODO_COMPLETAR`, en lote).
+  - Una sola historia por ticker en memoria (`HISTORY_PERIOD_BASE`); los pedidos de 1y/2y se
+    recortan. Para varios tickers usar `data_providers.precargar()` (una request), no un loop.
+  - Toda llamada de red con timeout. Cortacircuito: 3 fallas seguidas → 2 min sin Yahoo; rate
+    limit → 5 min. Mientras, se usa lo que haya (almacén o cache vencido). Nunca colgar la página.
+  - Controles de calidad del ETL (`calidad.py`): faltante, desactualizado (> 4 ruedas), salto
+    diario > 40%, hueco > 10 días, par del CCL a más de 5% de la mediana. Quedan en `audit_log`
+    (`ETL_PRECIOS`), en la corrida de Actions y en Estado del sistema.
+  - El snapshot diario lo guarda el ETL (uno por fecha; el botón del Dashboard queda para uno a mano).
+- **Robustez**: `app.py` envuelve `pg.run()`: una excepción en una página se muestra y el resto
+  sigue. Estado del sistema muestra storage, almacén, última corrida del ETL, Yahoo y versiones.
+- **Caches**: históricos en memoria (`PRICE_CACHE_TTL_SECONDS`, 15 min, tope de 300 tickers) + `st.cache_data`;
   Sheets: worksheets resueltos una vez y lecturas cacheadas 60 s, invalidadas al escribir.
   Después de cualquier escritura desde una página: `invalidar_caches()`.
   Altas múltiples con `repo.add_transactions()` (una llamada a la API).
@@ -120,6 +164,18 @@ Las páginas no deben tener lógica de negocio: llaman a `core/`. `core/` no imp
   0,4/0,7, max DD −20/−35%, prima ±3/6%, RSI 30–70). Los de vol y correlación coinciden con
   `semaforo_riesgo` y `rules_engine`: si se cambian, cambiarlos en los dos lados (hay test).
 - Cada tabla con semáforo lleva debajo la leyenda (`semaforos.LEYENDA`) con los umbrales.
+- **Formato argentino** en todo número visible: `$ 1.234.567,89`, `12,5 %`. Usar
+  `core/viz/formato.py` (`fmt`, `moneda`, `pct`, `estilo` para Styler); `semaforos.tabla` ya lo
+  aplica, Plotly lo toma de `separators` en `palette.plotly_layout_defaults` y `st.column_config`
+  usa `format="localized"`. Nada de f-strings `{x:,.2f}` sueltos en la UI.
+- **El dato antes que el gráfico**: el título de cada gráfico dice la conclusión ("SHOP aporta 26 %
+  con 19 % del peso"); los gráficos marcan el dato clave (máximo y caída, VaR, mayor posición).
+  **Rojo solo para alertas** (lo que supera un umbral), nunca decorativo.
+- **Accesibilidad**: el color nunca es la única señal (ícono + texto, `tarjeta_alerta`); texto con
+  contraste AA (`TEXT_MUTED` es solo para líneas); foco visible con teclado; `help=` en métricas.
+- **Botones**: un primario por pantalla, verbos concretos, `st.dialog` de confirmación para lo
+  irreversible (reverso). Nunca `st.success` justo antes de `st.rerun()` (no se ve): usar
+  `avisar_despues_del_rerun`.
 
 ## Definiciones de métricas (`core/performance/metrics.py`)
 
@@ -147,6 +203,12 @@ Todo sobre precios en **USD equivalente**, retornos diarios simples `r = p_t / p
   Precio de 1 unidad: CEDEAR = ADR × CCL / ratio (ratio del item o Comafi); acción = `.BA`.
   Peso de 1 unidad = precio / valor de la cartera; si supera p, la UI lo alerta.
 - Historia para decisión: `settings.HISTORY_PERIOD_DECISION` (3y por defecto).
+- **Impacto de la última operación** (`core/decision/ultima_operacion.py`): última = transacción
+  efectiva más reciente por (fecha, creado_en). Antes = cartera sin esa operación; después = la de
+  hoy; las dos a precios de hoy y sobre los mismos históricos (unión de tickers, días comunes).
+  Métricas: peso y aporte al riesgo (MCTR) del ticker, vol anual, VaR 95% en pesos y en %
+  (como pérdida positiva), riesgo en las 2 mayores, correlación ponderada, beta. Lectura: 🔴 peso
+  > 25%, 🟡 peso > 15% o aporte > 1,5 × peso, vol ± 1 pp.
 
 ## Flujo de trabajo
 
@@ -163,8 +225,11 @@ Todo sobre precios en **USD equivalente**, retornos diarios simples `r = p_t / p
 ## Backlog (en orden de prioridad)
 
 Hecho: G/P en USD-CCL (Cartera y Dashboard), métricas de rendimiento, watchlist + página
-Candidatos. El diseño de lo que sigue en la capa de decisión (rebalanceo, alertas, fundamentals,
-export para LLM, reglas con candidatos) está en **`docs/ROADMAP.md`**.
+Candidatos, robustez (versiones fijas, timeouts, cortacircuito, Estado del sistema, smoke test),
+almacén de precios + ETL diario + snapshots automáticos + uptime, UX (impacto de la última
+operación, formato AR, navegación por secciones). El diseño de lo que sigue en la capa de decisión
+(rebalanceo, alertas, fundamentals, export para LLM, reglas con candidatos) está en
+**`docs/ROADMAP.md`**.
 
 1. **Ganancia realizada + dividendos + efectivo.** Hoy solo hay no realizada y la comisión de
    venta se pierde. Probablemente requiere tipos de movimiento nuevos (dividendo, depósito) →
@@ -172,15 +237,18 @@ export para LLM, reglas con candidatos) está en **`docs/ROADMAP.md`**.
 2. **Ratios de Comafi persistidos en Sheets** (pestaña nueva) en vez de `data/cedear_ratios.csv`,
    que en Cloud se pierde en cada reinicio.
 3. **Mapeo ticker BCBA → ADR / yfinance** cuando difieren (ej. BRKB → BRK-B).
-4. **Snapshots automáticos diarios** (GitHub Actions con cron + script que use el repo de Sheets).
+4. **Revisar el ratio de YPFD en `CCL_PARES`**: el control de calidad del ETL marca que el par
+   YPFD.BA/YPF da un CCL ~10 veces menor que los otros dos (la mediana lo absorbe, pero hay que
+   confirmar el ratio contra BYMA).
 5. **Benchmark Merval en USD-CCL** y beta con retornos semanales para acciones argentinas.
-6. **Capa de decisión**: ítems 1–5 de `docs/ROADMAP.md`.
-7. Menores: `yf.download` en lote; limpiar imports sin uso (`pyflakes`); la página Riesgo
-   duplica cálculos de `core/risk/summary.py`.
+6. **Capa de decisión**: ítems 1–5 de `docs/ROADMAP.md` (el 2, alertas, quedó parcial).
+7. Menores: la página Riesgo duplica cálculos de `core/risk/summary.py`; el CCL histórico se pide
+   a 5y en cada visita (`tipo_cambio_ccl_historico`), hoy lo cubre el almacén.
 
 ## Pendientes manuales de Fede
 
-- Subir `.github/workflows/tests.yml` (CI con pytest).
-- Después del deploy de `feature/candidatos`: Reboot en Streamlit Cloud y verificar que apareció
-  la pestaña `watchlist` con sus 6 headers en la fila 1.
+- Cargar los secrets de GitHub Actions (`GCP_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEETS_SPREADSHEET_ID`,
+  `APP_URL`) y correr a mano *ETL diario* y *Uptime* (ver `docs/GITHUB_ACTIONS.md`).
+- Después del deploy de `feature/ux` (incluye robustez y datos): Reboot en Streamlit Cloud,
+  verificar la pestaña `precios` con sus 5 headers y, tras el primer ETL, Estado del sistema en verde.
 - Borrar la carpeta `.kilo/worktrees/` (copia vieja del proyecto, no está en git).

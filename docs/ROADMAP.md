@@ -1,7 +1,7 @@
 # Roadmap — Tracker Quant
 
 Diseño de lo que viene después de la capa de decisión (métricas + candidatos).
-Nada de esto está implementado todavía. Cada ítem se arranca con `/feature <nombre>`
+Los ítems numerados todavía no están implementados (salvo lo marcado). Cada ítem se arranca con `/feature <nombre>`
 y respeta las invariantes de `CLAUDE.md`.
 
 Estado: ✅ hecho · 🟡 en curso · ⬜ pendiente
@@ -11,8 +11,11 @@ Estado: ✅ hecho · 🟡 en curso · ⬜ pendiente
 | — | G/P en USD-CCL (Cartera y Dashboard) | ✅ |
 | — | Métricas de rendimiento (`core/performance/metrics.py`) | ✅ |
 | — | Watchlist + página Candidatos (`core/decision/candidatos.py`) | ✅ |
+| — | Robustez: versiones fijas, timeouts, cortacircuito, Estado del sistema, smoke test | ✅ |
+| — | Almacén de precios + ETL diario + snapshots automáticos + uptime (GitHub Actions) | ✅ |
+| — | Impacto de la última operación en el Dashboard (`core/decision/ultima_operacion.py`) | ✅ |
 | 1 | Simulador de rebalanceo | ⬜ |
-| 2 | Alertas en el Dashboard | ⬜ |
+| 2 | Alertas en el Dashboard | 🟡 |
 | 3 | Snapshot de fundamentals | ⬜ |
 | 4 | Export del Reporte para LLM | ⬜ |
 | 5 | `rules_engine` con candidatos concretos | ⬜ |
@@ -59,6 +62,12 @@ lo que hay, aportes acumulados.
 ---
 
 ## 2. Alertas en el Dashboard
+
+**Hecho (parcial):** el Dashboard ya muestra arriba las señales 🔴/🟡 de `rules_engine` como
+tarjetas (`tarjeta_alerta`) y la lectura del impacto de la última operación. **Falta** lo de
+abajo (balances, movimientos > 2σ, cruces de SMA200). Cambio de diseño: los precios para el
+2σ y la SMA200 salen del almacén `precios` (ya tiene 3 años por ticker), no de una descarga aparte;
+los earnings sí siguen siendo una llamada a yfinance (conviene sumarlos al ETL diario y guardarlos).
 
 Una sección "Alertas" compacta arriba del Dashboard, con tres tipos. Lógica en
 `core/insights/alertas.py` (funciones puras sobre DataFrames); datos con cache.
