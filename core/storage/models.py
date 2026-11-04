@@ -96,6 +96,44 @@ class Instrumento(BaseModel):
         )
 
 
+class PrecioCierre(BaseModel):
+    """Una fila del almacén de precios (pestaña `precios`, formato largo):
+    cierre diario de un ticker de yfinance (ADR, `.BA`, benchmark o par del
+    CCL). La llena el ETL diario (scripts/etl_precios.py); la app la lee en
+    vez de bajar todo de Yahoo en cada visita."""
+
+    fecha: date
+    ticker: str  # ticker de yfinance (ej. AAPL, GGAL.BA, SPY)
+    close: float
+    fuente: str = "yfinance"
+    actualizado_en: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("ticker")
+    @classmethod
+    def ticker_uppercase(cls, v):
+        return v.upper().strip()
+
+    def to_row(self) -> dict:
+        return {
+            "fecha": self.fecha.isoformat(),
+            "ticker": self.ticker,
+            "close": repr(float(self.close)),
+            "fuente": self.fuente,
+            "actualizado_en": self.actualizado_en.isoformat(),
+        }
+
+    @classmethod
+    def from_row(cls, d: dict) -> "PrecioCierre":
+        actualizado = d.get("actualizado_en")
+        return cls(
+            fecha=date.fromisoformat(d["fecha"]),
+            ticker=d["ticker"],
+            close=float(d["close"]),
+            fuente=d.get("fuente") or "yfinance",
+            actualizado_en=datetime.fromisoformat(actualizado) if actualizado else datetime.now(timezone.utc),
+        )
+
+
 class WatchlistItem(BaseModel):
     """Candidato que todavía no está en cartera (pestaña `watchlist`).
     Es independiente de `instrumentos`: si el ticker se compra, se da de

@@ -17,6 +17,7 @@ from core.storage.models import (
     Instrumento,
     PortfolioForecast,
     PortfolioSnapshot,
+    PrecioCierre,
     ProcessedFile,
     Transaction,
     TransactionAction,
@@ -113,6 +114,15 @@ class BaseRepository(ABC):
     @abstractmethod
     def remove_watchlist_item(self, ticker: str) -> bool:
         """Saca el ticker de la watchlist. True si existía."""
+
+    # --- Almacén de precios (lo llena el ETL diario) ---
+    @abstractmethod
+    def reemplazar_precios(self, precios: list[PrecioCierre]) -> None:
+        """Reescribe el almacén completo (el ETL baja la ventana entera cada
+        día: así los ajustes por dividendos/splits de Yahoo quedan consistentes)."""
+
+    @abstractmethod
+    def list_precios(self) -> list[PrecioCierre]: ...
 
     # --- Auditoría ---
     @abstractmethod

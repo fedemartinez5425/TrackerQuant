@@ -41,6 +41,8 @@ def _proveedores_sin_red(monkeypatch):
     monkeypatch.setattr(data_providers, "_fallback", ProveedorSinRed())
     monkeypatch.setattr(data_providers, "_cortado_hasta", 0.0)
     monkeypatch.setattr(data_providers, "_fallas_seguidas", 0)
+    data_providers.almacen.configurar(None)  # sin almacén salvo que el test lo configure
+    monkeypatch.setattr(data_providers.almacen, "_matriz", data_providers.almacen.pd.DataFrame())
     data_providers.limpiar_cache()
     yield
     data_providers.limpiar_cache()

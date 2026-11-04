@@ -12,9 +12,9 @@ from config.settings import settings
 from core import data_providers
 from core.portfolio.historicos import (
     InstrumentoRiesgo,
-    alinear_dias_comunes,
     desde_posiciones,
     historicos_usd_equivalente,
+    matriz_riesgo,
 )
 from core.portfolio.portfolio_engine import construir_cartera
 from core.storage import get_repository
@@ -40,6 +40,12 @@ def require_login() -> str:
         st.page_link("app.py", label="⬅️ Ir al login", icon="🔑")
         st.stop()
     return st.session_state.get("username") or st.session_state.get("name") or "usuario"
+
+
+def configurar_almacen() -> None:
+    """Los precios salen primero del almacén que llena el ETL diario (pestaña
+    `precios`); a Yahoo solo se le piden los días que falten."""
+    data_providers.almacen.configurar(get_repository().list_precios)
 
 
 def invalidar_caches() -> None:
@@ -105,12 +111,7 @@ def obtener_historicos_riesgo(posiciones, period: str | None = None) -> pd.DataF
     instrumentos = tuple(sorted(desde_posiciones(posiciones)))
     historicos_posiciones = _cached_historicos_usd(instrumentos, period)
     historico_benchmark = obtener_historicos([settings.DEFAULT_BENCHMARK], period=period)
-    if historicos_posiciones.empty:
-        return alinear_dias_comunes(historico_benchmark)
-    if historico_benchmark.empty:
-        return alinear_dias_comunes(historicos_posiciones)
-    combinado = pd.concat([historicos_posiciones, historico_benchmark], axis=1)
-    return alinear_dias_comunes(combinado)
+    return matriz_riesgo(historicos_posiciones, historico_benchmark)
 
 
 def obtener_watchlist() -> list[WatchlistItem]:

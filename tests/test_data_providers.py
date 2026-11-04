@@ -104,5 +104,76 @@ def test_si_yahoo_cae_usa_la_historia_vencida(monkeypatch):
 def test_cache_acotado(monkeypatch):
     monkeypatch.setattr(data_providers, "MAX_TICKERS_EN_MEMORIA", 2)
     for t in ["A", "B", "C"]:
-        data_providers._guardar_historia(t, _serie(t, 10), "3y")
+        data_providers._guardar_historia(t, _serie(t, 10), 1096)
     assert list(data_providers._history_cache) == ["B", "C"]
+
+
+# ---------------- Almacén de precios (ETL) ----------------
+from core.data_providers import almacen  # noqa: E402
+from core.storage.models import PrecioCierre  # noqa: E402
+
+
+def _precios_almacen(ticker: str, dias: int = 1200, hasta_hace: int = 1) -> list[PrecioCierre]:
+    hoy = pd.Timestamp.today().normalize()
+    fechas = pd.bdate_range(end=hoy - pd.Timedelta(days=hasta_hace), periods=dias)
+    return [PrecioCierre(fecha=f.date(), ticker=ticker, close=float(i + 1)) for i, f in enumerate(fechas)]
+
+
+def test_con_almacen_solo_pide_a_yahoo_los_ultimos_dias():
+    almacen.configurar(lambda: _precios_almacen("AAA"))
+    hoy = pd.Timestamp.today().normalize()
+    vivo = pd.DataFrame({"AAA": [9999.0, 5000.0]}, index=[hoy - pd.Timedelta(days=30), hoy])
+    with patch.object(data_providers._primary, "get_history", return_value=vivo) as mock:
+        h = data_providers.get_history("AAA", period="3y")
+    assert mock.call_args.kwargs["period"] == data_providers.PERIODO_COMPLETAR
+    assert h["AAA"].iloc[-1] == 5000.0  # se agregó el día nuevo
+    assert 9999.0 not in h["AAA"].values  # el pasado no se pisa
+
+
+def test_con_almacen_y_yahoo_caido_alcanza_con_el_almacen(monkeypatch):
+    almacen.configurar(lambda: _precios_almacen("AAA"))
+    monkeypatch.setattr(data_providers, "_cortado_hasta", 1e18)  # Yahoo en pausa
+    with patch.object(data_providers._primary, "get_history") as mock:
+        h = data_providers.get_history("AAA", period="2y")
+    mock.assert_not_called()
+    assert not h.empty and h.index.max() < pd.Timestamp.today().normalize()
+
+
+def test_almacen_mas_corto_que_el_periodo_baja_de_yahoo():
+    almacen.configurar(lambda: _precios_almacen("AAA", dias=100))
+    with patch.object(data_providers._primary, "get_history", return_value=_serie("AAA")) as mock:
+        data_providers.get_history("AAA", period="2y")
+    assert mock.call_args.kwargs["period"] == "3y"
+
+
+def test_precargar_con_almacen_pide_lote_chico_y_lote_completo_para_los_nuevos():
+    almacen.configurar(lambda: _precios_almacen("AAA"))
+    llamadas = []
+
+    def lote(tickers, period="2y"):
+        llamadas.append((tuple(tickers), period))
+        return {t: _serie(t) for t in tickers}
+
+    with patch.object(data_providers._primary, "get_history_lote", side_effect=lote):
+        data_providers.precargar(["AAA", "BBB"], period="2y")
+    assert (("AAA",), data_providers.PERIODO_COMPLETAR) in llamadas
+    assert (("BBB",), "3y") in llamadas
+
+
+def test_almacen_que_falla_al_leer_no_rompe_nada():
+    def roto():
+        raise RuntimeError("Sheets caído")
+
+    almacen.configurar(roto)
+    with patch.object(data_providers._primary, "get_history", return_value=_serie("AAA")):
+        h = data_providers.get_history("AAA", period="1y")
+    assert not h.empty
+    assert "Sheets caído" in almacen.estado()["error"]
+
+
+def test_matriz_desde_precios():
+    precios = _precios_almacen("AAA", dias=3) + _precios_almacen("BBB", dias=2)
+    m, actualizado = almacen.matriz_desde_precios(precios)
+    assert list(m.columns) == ["AAA", "BBB"] and len(m) == 3
+    assert m["BBB"].isna().sum() == 1
+    assert actualizado is not None

@@ -1,5 +1,3 @@
-import json
-
 import streamlit as st
 
 from app_helpers import (
@@ -15,7 +13,7 @@ from config.settings import settings
 from core.portfolio.portfolio_engine import resumen_cartera
 from core.risk.summary import calcular_resumen_riesgo
 from core.storage import get_repository
-from core.storage.models import PortfolioSnapshot
+from core.portfolio.snapshot import armar_snapshot
 from core.viz import charts
 from core.viz import palette as p
 from core.viz import semaforos
@@ -169,15 +167,6 @@ with st.expander("📸 Guardar snapshot de hoy (para analytics histórico)"):
         if not ccl:
             st.error("No se pudo obtener el CCL para expresar el snapshot en USD. Probá de nuevo en unos minutos.")
             st.stop()
-        snapshot = PortfolioSnapshot(
-            # El campo es en USD: antes se guardaba el valor en PESOS acá.
-            valor_total_usd=resumen["valor_actual_total"] / ccl["valor"],
-            cantidad_posiciones=resumen["cantidad_posiciones"],
-            volatilidad_anualizada=riesgo["volatilidad_anualizada"],
-            var_95_pct=riesgo["var_95_pct"],
-            beta_vs_benchmark=riesgo["beta_cartera"],
-            correlacion_promedio=riesgo["correlacion_ponderada"],
-            composicion_json=json.dumps(pesos),
-        )
+        snapshot = armar_snapshot(resumen, riesgo, pesos, ccl["valor"])
         repo.add_snapshot(snapshot)
         st.success(f"Snapshot guardado para {snapshot.fecha} (US$ {snapshot.valor_total_usd:,.2f} al CCL {ccl['valor']:,.2f}).")

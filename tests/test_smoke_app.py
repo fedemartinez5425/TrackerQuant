@@ -101,3 +101,17 @@ def test_cada_pagina_carga_sin_excepciones(entorno, pagina):
     # El aislador de errores de app.py convierte una excepción en st.error: también cuenta.
     fallas = [e.value for e in at.error if "falló al cargar" in e.value]
     assert not fallas, f"{pagina}: {fallas}"
+
+
+@pytest.mark.parametrize("pagina", ["1_Dashboard.py", "12_Estado.py", "11_Candidatos.py"])
+def test_paginas_con_el_almacen_cargado_por_el_etl(entorno, pagina):
+    from core.etl.precios import correr
+    from core.storage import get_repository
+
+    assert correr(get_repository(), con_snapshot=False).ok
+    data_providers.limpiar_cache()
+    at = _logueado(AppTest.from_file(str(RAIZ / "app.py"), default_timeout=TIMEOUT)).run()
+    at.switch_page(f"pages/{pagina}").run()
+    assert not at.exception, f"{pagina}: {[e.value for e in at.exception]}"
+    assert not [e.value for e in at.error if "falló al cargar" in e.value]
+    assert data_providers.almacen.estado()["tickers"] > 0

@@ -1,7 +1,6 @@
 from io import BytesIO
 
 import openpyxl
-import pytest
 
 from core.data_providers.comafi_ratios import _parsear_ratio, parsear_workbook
 

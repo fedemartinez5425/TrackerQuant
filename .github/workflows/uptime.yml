@@ -1,0 +1,37 @@
+name: Uptime
+
+# Abre la app con un navegador real cada 6 horas: la despierta si está dormida
+# y falla (te llega un mail de GitHub) si no carga.
+# Secret necesario: APP_URL (ej. https://trackerquant.streamlit.app)
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  uptime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Independiente de la app: solo corre Playwright.
+          python-version: "3.12"
+      - name: Instalar Playwright
+        run: |
+          pip install playwright==1.48.0
+          python -m playwright install --with-deps chromium
+      - name: Abrir la app
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+        run: python scripts/uptime.py
+      - name: Captura de pantalla
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uptime
+          path: uptime.png
+          if-no-files-found: ignore
+          retention-days: 7

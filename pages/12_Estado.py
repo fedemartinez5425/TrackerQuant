@@ -1,12 +1,14 @@
 """Estado del sistema: para saber qué falla sin entrar a los logs de Streamlit Cloud."""
-from datetime import datetime
+from datetime import date, datetime
 
+import pandas as pd
 import streamlit as st
 
 from app_helpers import invalidar_caches, require_login
 from core import data_providers
+from core.etl.precios import ultima_corrida
 from core.sistema import version_deploy, versiones_paquetes
-from core.storage import get_backend_status
+from core.storage import get_backend_status, get_repository
 
 require_login()
 
@@ -34,6 +36,36 @@ elif storage["activo"] == "gsheets":
     st.success("🟢 Google Sheets conectado.")
 else:
     st.info("🔵 CSV local (modo desarrollo).")
+
+# ---------------- Almacén de precios (ETL diario) ----------------
+st.subheader("Almacén de precios (ETL diario)")
+alm = data_providers.almacen.estado()
+if alm["error"]:
+    st.error(f"🔴 No se pudo leer la pestaña `precios`: `{alm['error']}`. Se usa Yahoo directo.")
+elif not alm["tickers"]:
+    st.warning(
+        "🟡 El almacén está vacío: todavía no corrió el ETL (GitHub Actions → *ETL diario* → Run workflow). "
+        "Mientras tanto todo se baja de Yahoo en cada visita, que es más lento."
+    )
+else:
+    ruedas = len(pd.bdate_range(alm["ultima_fecha"], date.today())) - 1
+    texto = (
+        f"{alm['tickers']} tickers, último cierre del **{alm['ultima_fecha']:%d/%m/%Y}**"
+        + (f" · actualizado {alm['actualizado_en']:%d/%m %H:%M} UTC" if alm["actualizado_en"] else "")
+    )
+    if ruedas > 2:
+        st.warning(f"🟡 {texto}. Tiene {ruedas} ruedas de atraso: revisá que el ETL esté corriendo en GitHub Actions.")
+    else:
+        st.success(f"🟢 {texto}. Los días posteriores se completan en vivo desde Yahoo.")
+
+corrida = ultima_corrida(get_repository())
+if corrida:
+    severo = "FALLÓ" in corrida.detalle
+    (st.error if severo else st.caption)(
+        f"Última corrida del ETL ({corrida.timestamp:%d/%m/%Y %H:%M} UTC): {corrida.detalle}"
+    )
+else:
+    st.caption("Sin corridas del ETL registradas en el log de auditoría.")
 
 # ---------------- Yahoo ----------------
 st.subheader("Precios de mercado (Yahoo Finance)")

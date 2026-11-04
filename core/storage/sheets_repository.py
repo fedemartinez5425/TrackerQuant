@@ -9,6 +9,7 @@ Diseño relacional (una pestaña por tabla):
 - processed_files: registro de qué archivos de Drive ya se importaron
 - audit_log: quién hizo qué y cuándo
 - watchlist: candidatos fuera de cartera (1 fila por ticker)
+- precios: almacén de cierres diarios (formato largo); lo reescribe el ETL diario
 
 Credenciales: en local, un archivo JSON de service account
 (GOOGLE_SERVICE_ACCOUNT_FILE). En Streamlit Cloud, el mismo JSON pero
@@ -32,6 +33,7 @@ from core.storage.csv_repository import (
     AUDIT_FIELDS,
     FORECAST_FIELDS,
     INSTRUMENTO_FIELDS,
+    PRECIO_FIELDS,
     PROCESSED_FILE_FIELDS,
     SNAPSHOT_FIELDS,
     TRANSACTION_FIELDS,
@@ -42,6 +44,7 @@ from core.storage.models import (
     Instrumento,
     PortfolioForecast,
     PortfolioSnapshot,
+    PrecioCierre,
     ProcessedFile,
     Transaction,
     WatchlistItem,
@@ -56,6 +59,7 @@ SHEET_SNAPSHOTS = "portfolio_snapshots"
 SHEET_FORECASTS = "forecast_log"
 SHEET_PROCESSED_FILES = "processed_files"
 SHEET_WATCHLIST = "watchlist"
+SHEET_PRECIOS = "precios"
 
 CACHE_TTL_SEGUNDOS = 60
 
@@ -88,6 +92,7 @@ class SheetsRepository(BaseRepository):
             (SHEET_FORECASTS, FORECAST_FIELDS),
             (SHEET_PROCESSED_FILES, PROCESSED_FILE_FIELDS),
             (SHEET_WATCHLIST, WATCHLIST_FIELDS),
+            (SHEET_PRECIOS, PRECIO_FIELDS),
         ):
             ws = existentes.get(titulo)
             if ws is None:
@@ -230,6 +235,21 @@ class SheetsRepository(BaseRepository):
         self._worksheet(SHEET_WATCHLIST).delete_rows(fila)
         self._invalidar(SHEET_WATCHLIST)
         return True
+
+    # ---------------- Almacén de precios ----------------
+    def reemplazar_precios(self, precios: list[PrecioCierre]) -> None:
+        """2 llamadas a la API sin importar cuántas filas: ajustar el tamaño
+        de la hoja (borra lo que sobre) y escribir todo de una. RAW para que
+        Sheets no convierta fechas ni números con el formato regional."""
+        ws = self._worksheet(SHEET_PRECIOS)
+        valores = [list(PRECIO_FIELDS)] + [_celdas(p.to_row(), PRECIO_FIELDS) for p in precios]
+        ws.resize(rows=len(valores), cols=len(PRECIO_FIELDS))
+        ws.update(range_name="A1", values=valores, value_input_option="RAW")
+        self._invalidar(SHEET_PRECIOS)
+        logger.info("Almacén de precios reescrito en Sheets: %d filas.", len(precios))
+
+    def list_precios(self) -> list[PrecioCierre]:
+        return [PrecioCierre.from_row(d) for d in self._dicts(SHEET_PRECIOS, "ticker")]
 
     # ---------------- Auditoría ----------------
     def add_audit_event(self, event: AuditEvent) -> None:

@@ -104,6 +104,16 @@ def historicos_usd_equivalente(
     return pd.concat(frames, axis=1).dropna(how="all")
 
 
+def matriz_riesgo(historicos_posiciones: pd.DataFrame, historico_benchmark: pd.DataFrame) -> pd.DataFrame:
+    """Posiciones (USD equivalente) + benchmark, alineados en los días en que
+    cotizaron todos. Es la entrada de calcular_resumen_riesgo."""
+    if historicos_posiciones.empty:
+        return alinear_dias_comunes(historico_benchmark)
+    if historico_benchmark.empty:
+        return alinear_dias_comunes(historicos_posiciones)
+    return alinear_dias_comunes(pd.concat([historicos_posiciones, historico_benchmark], axis=1))
+
+
 def alinear_dias_comunes(precios: pd.DataFrame, min_dias: int = MIN_DIAS_ALINEADOS) -> pd.DataFrame:
     """Deja solo los días en que TODAS las columnas tienen precio (descarta
     feriados de un solo mercado en vez de inventar un precio).

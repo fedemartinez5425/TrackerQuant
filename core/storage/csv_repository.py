@@ -23,6 +23,7 @@ from core.storage.models import (
     Instrumento,
     PortfolioForecast,
     PortfolioSnapshot,
+    PrecioCierre,
     ProcessedFile,
     Transaction,
     WatchlistItem,
@@ -43,6 +44,7 @@ SNAPSHOT_FIELDS = [
 FORECAST_FIELDS = ["id", "fecha", "horizonte_dias", "vol_pronosticada_anual", "metodo", "composicion_json", "creado_en"]
 PROCESSED_FILE_FIELDS = ["id", "drive_file_id", "nombre_archivo", "tipo_detectado", "filas_importadas", "procesado_en"]
 WATCHLIST_FIELDS = ["ticker", "tipo_instrumento", "ticker_usd", "ratio_cedear", "notas", "agregado_en"]
+PRECIO_FIELDS = ["fecha", "ticker", "close", "fuente", "actualizado_en"]
 
 
 def _ensure_file(path: Path, fields: list[str]) -> None:
@@ -62,6 +64,7 @@ class CsvRepository(BaseRepository):
         processed_files_file: Path,
         forecasts_file: Path,
         watchlist_file: Path | None = None,
+        precios_file: Path | None = None,
     ):
         self.transactions_file = transactions_file
         self.audit_file = audit_file
@@ -70,6 +73,7 @@ class CsvRepository(BaseRepository):
         self.processed_files_file = processed_files_file
         self.forecasts_file = forecasts_file
         self.watchlist_file = watchlist_file or transactions_file.parent / "watchlist.csv"
+        self.precios_file = precios_file or transactions_file.parent / "precios.csv"
         _ensure_file(self.transactions_file, TRANSACTION_FIELDS)
         _ensure_file(self.audit_file, AUDIT_FIELDS)
         _ensure_file(self.snapshots_file, SNAPSHOT_FIELDS)
@@ -77,6 +81,7 @@ class CsvRepository(BaseRepository):
         _ensure_file(self.processed_files_file, PROCESSED_FILE_FIELDS)
         _ensure_file(self.forecasts_file, FORECAST_FIELDS)
         _ensure_file(self.watchlist_file, WATCHLIST_FIELDS)
+        _ensure_file(self.precios_file, PRECIO_FIELDS)
 
     # ---------------- helpers ----------------
     @staticmethod
@@ -179,6 +184,18 @@ class CsvRepository(BaseRepository):
             return False
         self._escribir_watchlist(quedan)
         return True
+
+    # ---------------- Almacén de precios ----------------
+    def reemplazar_precios(self, precios: list[PrecioCierre]) -> None:
+        with self.precios_file.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=PRECIO_FIELDS)
+            writer.writeheader()
+            for p in precios:
+                writer.writerow(p.to_row())
+        logger.info("Almacén de precios reescrito: %d filas.", len(precios))
+
+    def list_precios(self) -> list[PrecioCierre]:
+        return [PrecioCierre.from_row(r) for r in self._leer(self.precios_file, "ticker")]
 
     # ---------------- Auditoría ----------------
     def add_audit_event(self, event: AuditEvent) -> None:

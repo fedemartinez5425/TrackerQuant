@@ -13,6 +13,7 @@ import logging
 import streamlit as st
 
 import app_style
+from app_helpers import configurar_almacen
 from config.logging_config import setup_logging
 from config.settings import settings
 from core.auth.auth_service import render_login, render_logout_button
@@ -93,6 +94,8 @@ if estado_storage["inconsistente"]:
     if st.button("🔄 Reintentar conexión a Google Sheets"):
         reset_repository_cache()
         st.rerun()
+
+configurar_almacen()
 
 # Si una página falla, se muestra el error y el resto de la app sigue andando
 # (antes una excepción dejaba la pantalla a medio dibujar). st.stop / st.rerun

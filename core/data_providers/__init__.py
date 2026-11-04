@@ -10,6 +10,10 @@ Robustez (Yahoo limita las IPs compartidas de Streamlit Cloud):
 - Cortacircuito: tras varias fallas seguidas (o un rate limit) se deja de
   llamar a Yahoo por unos minutos y se usa lo que haya en memoria, en vez de
   encadenar timeouts y dejar la página colgada.
+- Almacén (core/data_providers/almacen.py): si el ETL diario ya guardó la
+  historia de un ticker, se usa esa y a Yahoo solo se le piden los últimos
+  días (los posteriores al último cierre guardado). Si Yahoo no responde,
+  alcanza con el almacén.
 """
 from __future__ import annotations
 
@@ -21,6 +25,7 @@ from collections import OrderedDict
 import pandas as pd
 
 from config.settings import settings
+from core.data_providers import almacen
 from core.data_providers.alpha_vantage_client import AlphaVantageProvider
 from core.data_providers.yfinance_client import YFinanceProvider
 
@@ -29,7 +34,10 @@ logger = logging.getLogger(__name__)
 _primary = YFinanceProvider()
 _fallback = AlphaVantageProvider()
 
-MAX_TICKERS_EN_MEMORIA = 300  # tope del cache: en Cloud hay ~1 GB de RAM compartida
+MAX_TICKERS_EN_MEMORIA = 300
+# Lo que se le pide a Yahoo para completar el almacén (cubre un fin de semana
+# largo + feriados: solo se agregan los días posteriores al último cierre guardado).
+PERIODO_COMPLETAR = "10d"  # tope del cache: en Cloud hay ~1 GB de RAM compartida
 
 _price_cache: dict[str, tuple[float, float]] = {}  # ticker -> (precio, timestamp)
 # ticker -> (DataFrame, timestamp, días cubiertos). Sin esto, cada rerun de
@@ -80,6 +88,7 @@ def estado_proveedores() -> dict:
         "ultimo_error": _ultimo_error,
         "tickers_en_memoria": len(_history_cache),
         "alpha_vantage_configurado": bool(settings.ALPHA_VANTAGE_API_KEY),
+        "almacen": almacen.estado(),
     }
 
 
@@ -110,11 +119,28 @@ def _recortar(hist: pd.DataFrame, period: str) -> pd.DataFrame:
     return hist.loc[hist.index >= desde].copy()
 
 
-def _guardar_historia(ticker: str, hist: pd.DataFrame, period_bajado: str) -> None:
-    _history_cache[ticker] = (hist, time.time(), dias_periodo(period_bajado))
+def _guardar_historia(ticker: str, hist: pd.DataFrame, dias_cubiertos: float) -> None:
+    _history_cache[ticker] = (hist, time.time(), dias_cubiertos)
     _history_cache.move_to_end(ticker)
     while len(_history_cache) > MAX_TICKERS_EN_MEMORIA:
         _history_cache.popitem(last=False)
+
+
+def _completar_con_vivo(base: pd.DataFrame, vivo: pd.DataFrame | None, ticker: str) -> pd.DataFrame:
+    """Agrega a la historia del almacén solo los días POSTERIORES a su último
+    cierre (no pisa el pasado: el ETL lo reescribe entero cada día)."""
+    if vivo is None or vivo.empty or ticker not in vivo.columns:
+        return base
+    nuevos = vivo.loc[vivo.index > base.index.max(), [ticker]].dropna()
+    return pd.concat([base, nuevos]) if not nuevos.empty else base
+
+
+def _desde_almacen(ticker: str, period: str) -> float | None:
+    """Días que cubre el almacén para este ticker (None si no lo cubre)."""
+    base = almacen.serie(ticker, period)
+    if base is None:
+        return None
+    return (pd.Timestamp.today().normalize() - base.index.min()).days + almacen.MARGEN_COBERTURA_DIAS
 
 
 def _historia_en_cache(ticker: str, period: str, aceptar_vencida: bool = False) -> pd.DataFrame | None:
@@ -172,6 +198,16 @@ def get_history(ticker: str, period: str | None = None, use_cache: bool = True) 
         if hist is not None:
             return _recortar(hist, period)
 
+    base = almacen.serie(ticker, period)
+    if base is not None:
+        vivo = None
+        if _yahoo_disponible():
+            vivo = _primary.get_history(ticker, period=PERIODO_COMPLETAR)
+            _registrar_resultado()
+        hist = _completar_con_vivo(base, vivo, ticker)
+        _guardar_historia(ticker, hist, _desde_almacen(ticker, period))
+        return _recortar(hist, period)
+
     period_bajado = _periodo_a_bajar(period)
     hist = None
     if _yahoo_disponible():
@@ -182,7 +218,7 @@ def get_history(ticker: str, period: str | None = None, use_cache: bool = True) 
         hist = _fallback.get_history(ticker, period=period_bajado)
 
     if hist is not None and not hist.empty:
-        _guardar_historia(ticker, hist, period_bajado)
+        _guardar_historia(ticker, hist, dias_periodo(period_bajado))
         return _recortar(hist, period)
 
     # Yahoo caído: mejor una historia de hace un rato que nada.
@@ -198,21 +234,37 @@ def precargar(tickers: list[str], period: str | None = None) -> None:
     Después, get_history / get_price de esos tickers salen del cache."""
     period = period or settings.HISTORY_PERIOD
     faltantes = sorted({t for t in tickers if t and _historia_en_cache(t, period) is None})
-    if not faltantes or not _yahoo_disponible():
+    if not faltantes:
         return
-    period_bajado = _periodo_a_bajar(period)
-    lote = _primary.get_history_lote(faltantes, period=period_bajado)
-    _registrar_resultado()
-    for ticker, hist in lote.items():
-        _guardar_historia(ticker, hist, period_bajado)
-    if lote:
-        logger.info("Precarga en lote: %d/%d tickers.", len(lote), len(faltantes))
+    en_almacen = {t: almacen.serie(t, period) for t in faltantes}
+    en_almacen = {t: s for t, s in en_almacen.items() if s is not None}
+    a_bajar = [t for t in faltantes if t not in en_almacen]
+
+    # Los que están en el almacén: una request chica con los últimos días.
+    if en_almacen:
+        vivos = {}
+        if _yahoo_disponible():
+            vivos = _primary.get_history_lote(sorted(en_almacen), period=PERIODO_COMPLETAR)
+            _registrar_resultado()
+        for ticker, base in en_almacen.items():
+            _guardar_historia(ticker, _completar_con_vivo(base, vivos.get(ticker), ticker), _desde_almacen(ticker, period))
+
+    # El resto (tickers nuevos o períodos más largos): la ventana completa.
+    if a_bajar and _yahoo_disponible():
+        period_bajado = _periodo_a_bajar(period)
+        lote = _primary.get_history_lote(a_bajar, period=period_bajado)
+        _registrar_resultado()
+        for ticker, hist in lote.items():
+            _guardar_historia(ticker, hist, dias_periodo(period_bajado))
+        if lote:
+            logger.info("Precarga en lote: %d/%d tickers.", len(lote), len(a_bajar))
 
 
 def limpiar_cache() -> None:
-    """Vacía los caches en memoria de precios e históricos."""
+    """Vacía los caches en memoria de precios e históricos (y fuerza a releer el almacén)."""
     _price_cache.clear()
     _history_cache.clear()
+    almacen.invalidar()
 
 
 def get_info(ticker: str) -> dict:
