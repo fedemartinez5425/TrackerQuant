@@ -42,6 +42,11 @@ if not st.session_state.get("authentication_status"):
     # Navegación oculta con una sola página: sin esto Streamlit mostraba el menú
     # automático de la carpeta pages/ (todas las páginas) en la pantalla de login.
     st.navigation([st.Page(_pantalla_login, title="Ingresar", icon="🔑")], position="hidden").run()
+    # El login (por cookie "recordarme" o por formulario) marca la sesión como autenticada
+    # DURANTE esta corrida y no vuelve a correr el script: sin este rerun quedaba una pantalla
+    # con solo el título hasta el próximo clic.
+    if st.session_state.get("authentication_status"):
+        st.rerun()
     st.stop()
 
 username = st.session_state.get("name") or st.session_state.get("username", "usuario")

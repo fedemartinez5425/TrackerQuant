@@ -18,7 +18,9 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-TEXTO_OK = "Tracker Quant"  # título de la pantalla de login (y del sidebar)
+# Tiene que verse el FORMULARIO de login, no solo el título: con un bug de login la
+# pantalla mostraba "Tracker Quant" y nada más, y el chequeo daba OK igual.
+TEXTOS_OK = ("Tracker Quant", "Password")
 TEXTOS_ERROR = (
     "Failed to fetch dynamically imported module",
     "trouble loading",
@@ -59,7 +61,7 @@ def main() -> int:
             if error:
                 print(f"::error::La app cargó con error: «{error}»")
                 break
-            if TEXTO_OK in texto:
+            if all(t in texto for t in TEXTOS_OK):
                 print(f"OK: la app cargó en {time.time() - inicio:.0f} s" + (" (estaba dormida)" if desperto else ""))
                 resultado = 0
                 break

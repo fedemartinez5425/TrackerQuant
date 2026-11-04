@@ -85,6 +85,28 @@ def test_login_arranca_sin_errores(entorno):
     at = AppTest.from_file(str(RAIZ / "app.py"), default_timeout=TIMEOUT).run()
     assert not at.exception
     assert any("Tracker Quant" in t.value for t in at.title)
+    assert len(at.text_input) >= 2, "no se dibujó el formulario de login (usuario y clave)"
+
+
+def test_login_que_autentica_en_la_misma_corrida_entra_al_dashboard(entorno, monkeypatch):
+    """Cookie "recordarme" válida (o formulario enviado): authenticator.login() marca la
+    sesión como autenticada sin dibujar el formulario. Antes la app hacía st.stop() y
+    quedaba una pantalla con solo el título."""
+    import streamlit as st
+
+    from core.auth import auth_service
+
+    def login_por_cookie():
+        st.session_state["authentication_status"] = True
+        st.session_state["username"] = "fede"
+        st.session_state["name"] = "Fede"
+        return True, "fede"
+
+    monkeypatch.setattr(auth_service, "render_login", login_por_cookie)
+    at = AppTest.from_file(str(RAIZ / "app.py"), default_timeout=TIMEOUT).run()
+    assert not at.exception
+    assert any("Dashboard" in t.value for t in at.title), [t.value for t in at.title]
+    assert len(at.metric) >= 6
 
 
 def test_app_logueada_muestra_el_dashboard(entorno):
