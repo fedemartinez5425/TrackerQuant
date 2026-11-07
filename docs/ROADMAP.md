@@ -7,13 +7,18 @@ y respeta las invariantes de `CLAUDE.md`.
 Estado: ✅ hecho · 🟡 en curso · ⬜ pendiente
 
 | # | Ítem | Estado |
-|---|------|--------|
+|**Pendiente de la Evolución real:** cuenta de efectivo (hoy vender = retirar plata; va con el ítem 1 del
+backlog de CLAUDE.md), splits y cambios de ratio cargados como movimiento (hoy solo se avisan) y
+anualizar el rendimiento cuando el período supere el año.
+
+---|------|--------|
 | — | G/P en USD-CCL (Cartera y Dashboard) | ✅ |
 | — | Métricas de rendimiento (`core/performance/metrics.py`) | ✅ |
 | — | Watchlist + página Candidatos (`core/decision/candidatos.py`) | ✅ |
 | — | Robustez: versiones fijas, timeouts, cortacircuito, Estado del sistema, smoke test | ✅ |
 | — | Almacén de precios + ETL diario + snapshots automáticos + uptime (GitHub Actions) | ✅ |
 | — | Impacto de la última operación en el Dashboard (`core/decision/ultima_operacion.py`) | ✅ |
+| — | Evolución real de la cartera: valor diario, aportes, rendimiento time-weighted vs SPY y dólar (`core/portfolio/evolucion.py`) | ✅ |
 | 1 | Simulador de rebalanceo | ⬜ |
 | 2 | Alertas en el Dashboard | 🟡 |
 | 3 | Snapshot de fundamentals | ⬜ |

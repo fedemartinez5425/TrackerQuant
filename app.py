@@ -66,6 +66,7 @@ paginas = {
     ],
     "Mi cartera": [
         st.Page("pages/2_Cartera.py", title="Posiciones", icon="💼"),
+        st.Page("pages/13_Evolucion.py", title="Evolución real", icon="📆"),
         st.Page("pages/3_Transacciones.py", title="Transacciones", icon="📝"),
         st.Page("pages/7_Importar_Broker.py", title="Importar del broker", icon="📥"),
     ],

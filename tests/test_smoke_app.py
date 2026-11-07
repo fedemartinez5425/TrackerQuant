@@ -127,7 +127,7 @@ def test_cada_pagina_carga_sin_excepciones(entorno, pagina):
     assert not fallas, f"{pagina}: {fallas}"
 
 
-@pytest.mark.parametrize("pagina", ["1_Dashboard.py", "12_Estado.py", "11_Candidatos.py"])
+@pytest.mark.parametrize("pagina", ["1_Dashboard.py", "12_Estado.py", "11_Candidatos.py", "13_Evolucion.py"])
 def test_paginas_con_el_almacen_cargado_por_el_etl(entorno, pagina):
     from core.etl.precios import correr
     from core.storage import get_repository

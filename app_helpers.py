@@ -90,6 +90,32 @@ def obtener_cartera_actual():
         return construir_cartera(transacciones, instrumentos)
 
 
+@st.cache_data(
+    ttl=settings.PRICE_CACHE_TTL_SECONDS, max_entries=4,
+    show_spinner="Reconstruyendo la historia de tu cartera (precios desde tu primera compra)…",
+)
+def _cached_mercado_evolucion(clave: tuple, _transacciones, _instrumentos):
+    from core.portfolio.evolucion import cargar_mercado
+
+    return cargar_mercado(_transacciones, _instrumentos)
+
+
+def obtener_evolucion():
+    """Evolución real de la cartera (core/portfolio/evolucion.py). Los precios
+    se cachean por (tickers, primera fecha); el cálculo es local y rápido."""
+    from core.portfolio.evolucion import calcular_evolucion, tickers_necesarios
+    from core.storage.models import transacciones_efectivas
+
+    transacciones = obtener_transacciones()
+    instrumentos = obtener_instrumentos()
+    efectivas = transacciones_efectivas(transacciones)
+    if not efectivas:
+        return None, pd.DataFrame()
+    clave = (tuple(tickers_necesarios(transacciones, instrumentos)), min(t.fecha for t in efectivas))
+    precios, ccl = _cached_mercado_evolucion(clave, transacciones, instrumentos)
+    return calcular_evolucion(transacciones, instrumentos, precios, ccl), precios
+
+
 def obtener_historicos(tickers: list[str], period: str | None = None) -> pd.DataFrame:
     period = period or settings.HISTORY_PERIOD
     if not tickers:

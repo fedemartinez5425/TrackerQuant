@@ -344,3 +344,78 @@ def _mezclar(color_a: str, color_b: str, t: float) -> str:
     b = tuple(int(color_b.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
     mezcla = tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
     return f"rgb({mezcla[0]},{mezcla[1]},{mezcla[2]})"
+
+
+def valor_vs_aportes(
+    valor: pd.Series, aportes: pd.Series, operaciones: pd.DataFrame | None = None, moneda: str = "ARS", titulo: str = ""
+) -> go.Figure:
+    """Valor real de la cartera vs. la plata puesta (escalón), con las compras
+    (▲) y ventas (▼) marcadas sobre la línea de valor. La distancia entre las
+    dos líneas es la ganancia o pérdida acumulada."""
+    simbolo = "US$" if moneda == "USD" else "$"
+    decimales = ",.0f" if moneda == "ARS" else ",.2f"
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=aportes.index, y=aportes.values, mode="lines", name="Plata que pusiste",
+        line=dict(color=p.TEXT_SECONDARY, width=2, dash="dot", shape="hv"),
+        hovertemplate=f"Pusiste: {simbolo} %{{y:{decimales}}}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=valor.index, y=valor.values, mode="lines", name="Valor de la cartera",
+        line=dict(color=p.ACCENT, width=2.2),
+        hovertemplate=f"%{{x|%d/%m/%Y}}<br>Valor: {simbolo} %{{y:{decimales}}}<extra></extra>",
+    ))
+    if operaciones is not None and not operaciones.empty:
+        col_valor = "valor_dia_usd" if moneda == "USD" else "valor_dia_ars"
+        col_monto = "monto_usd" if moneda == "USD" else "monto_ars"
+        for accion, simbolo_marca, nombre in (("COMPRA", "triangle-up", "Compra"), ("VENTA", "triangle-down", "Venta")):
+            ops = operaciones[(operaciones["accion"] == accion) & (operaciones["fecha"] >= valor.index[0])]
+            if ops.empty:
+                continue
+            detalle = [
+                f"{nombre} {r.ticker}: {formato.fmt(r.cantidad, ',.0f')} a {formato.fmt(r.precio, ',.2f')} {r.moneda}"
+                f"<br>{'Pusiste' if accion == 'COMPRA' else 'Sacaste'} {formato.moneda(abs(getattr(r, col_monto)), moneda)}"
+                for r in ops.itertuples()
+            ]
+            fig.add_trace(go.Scatter(
+                x=ops["fecha"], y=ops[col_valor], mode="markers", name=nombre,
+                marker=dict(symbol=simbolo_marca, size=11, color=p.TEXT_PRIMARY if accion == "COMPRA" else p.WARNING,
+                            line=dict(color=p.BG_DARK, width=1.5)),
+                text=detalle, hovertemplate="%{x|%d/%m/%Y}<br>%{text}<extra></extra>",
+            ))
+    if len(valor):
+        ultimo = valor.iloc[-1]
+        fig.add_annotation(
+            x=valor.index[-1], y=ultimo, text=f"<b>{formato.moneda(ultimo, moneda, 0 if moneda == 'ARS' else 2)}</b>",
+            showarrow=True, arrowhead=0, ax=-10, ay=-30, xanchor="right",
+            font=dict(family=p.FONT_FAMILY_MONO, color=p.ACCENT, size=12),
+            bgcolor=p.BG_PANEL_LIGHT, bordercolor=p.ACCENT, borderwidth=1, borderpad=4,
+        )
+    fig.update_layout(**p.plotly_layout_defaults(altura=360), title=titulo, hovermode="x unified")
+    fig.update_layout(legend=dict(orientation="h", y=-0.12, font=dict(color=p.TEXT_SECONDARY)))
+    fig.update_xaxes(tickformat="%m/%Y", dtick="M1")
+    return fig
+
+
+def composicion_en_el_tiempo(pesos: pd.DataFrame, titulo: str = "", max_series: int = 7) -> go.Figure:
+    """Áreas apiladas al 100 % con el peso de cada activo día por día. El color
+    sigue al ticker (orden por peso promedio, fijo para el período) y más allá
+    de `max_series` se agrupa en "Otros"."""
+    pesos = pesos.loc[:, (pesos > 0).any()]
+    orden = pesos.mean().sort_values(ascending=False).index.tolist()
+    if len(orden) > max_series:
+        principales = orden[: max_series - 1]
+        pesos = pesos[principales].assign(Otros=pesos[orden[max_series - 1:]].sum(axis=1))
+        orden = principales + ["Otros"]
+    fig = go.Figure()
+    for i, col in enumerate(orden):
+        color = p.CHART_SEQUENCE[i % len(p.CHART_SEQUENCE)] if col != "Otros" else p.TEXT_MUTED
+        fig.add_trace(go.Scatter(
+            x=pesos.index, y=pesos[col] * 100, mode="lines", name=col, stackgroup="uno",
+            line=dict(width=0.5, color=p.BG_DARK), fillcolor=color,
+            hovertemplate=f"{col}: " + "%{y:.1f} %<extra></extra>",
+        ))
+    fig.update_layout(**p.plotly_layout_defaults(altura=320), title=titulo, hovermode="x unified")
+    fig.update_yaxes(range=[0, 100], ticksuffix=" %")
+    fig.update_xaxes(tickformat="%m/%Y", dtick="M1")
+    return fig

@@ -39,7 +39,7 @@ no recomienda comprar nada, muestra el impacto cuantitativo y advierte que es un
 .venv\Scripts\Activate.ps1          # si falla: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 pip install -r requirements-dev.txt  # = requirements.txt (versiones exactas) + pytest + pyflakes
 streamlit run app.py                 # local usa CSV en data/ salvo que haya secrets de gsheets
-pytest -q tests                      # 176 tests, sin red (incluye smoke test de todas las páginas)
+pytest -q tests                      # 197 tests, sin red (incluye smoke test de todas las páginas)
 python -m pyflakes app.py app_helpers.py app_style.py core pages scripts
 python scripts/etl_precios.py --dry-run   # ETL contra Yahoo real, sin escribir nada
 ```
@@ -64,7 +64,7 @@ app.py                  entry point: st.navigation() por secciones (Resumen, Mi 
 app_helpers.py          helpers de UI + caches (st.cache_data, max_entries) + invalidar_caches() ·
                         impacto de la última operación · frescura de precios · tarjeta_alerta ·
                         avisar_despues_del_rerun (toast que sobrevive a st.rerun)
-pages/                  12 páginas (Dashboard, Reporte, Cartera, Transacciones, Históricos,
+pages/                  13 páginas (Dashboard, Reporte, Cartera, Evolución real, Transacciones, Históricos,
                         Riesgo, Forecasting, Escenarios, Candidatos, Importar Broker, Configuración,
                         Estado del sistema)
 scripts/                generar_credenciales · etl_precios (lo corre GitHub Actions) · uptime (Playwright)
@@ -74,7 +74,8 @@ core/storage/           models.py (Pydantic) · base_repository.py · csv_reposi
                         sheets_repository.py · __init__.py (factory get_repository())
 core/portfolio/         portfolio_engine.py (tenencias, costo promedio) · historicos.py
                         (USD equivalente, tickers_de_mercado, matriz_riesgo, alinear_dias_comunes) ·
-                        attribution.py (MCTR) · snapshot.py (armar_snapshot, lo usan Dashboard y ETL)
+                        attribution.py (MCTR) · snapshot.py (armar_snapshot, lo usan Dashboard y ETL) ·
+                        evolucion.py (valor diario real, aportes, rendimiento time-weighted, alertas de split)
 core/risk/              volatility, var, correlation, stress_test, summary
 core/performance/       metrics.py (CAGR, Sharpe, Sortino, drawdown, momentum, SMA, RSI; por
                         activo y para la cartera con pesos constantes)
@@ -136,6 +137,8 @@ Las páginas no deben tener lógica de negocio: llaman a `core/`. `core/` no imp
   - Controles de calidad del ETL (`calidad.py`): faltante, desactualizado (> 4 ruedas), salto
     diario > 40%, hueco > 10 días, par del CCL a más de 5% de la mediana. Quedan en `audit_log`
     (`ETL_PRECIOS`), en la corrida de Actions y en Estado del sistema.
+  - El ETL también guarda el `.BA` de los CEDEARs (Posiciones y Evolución real) y, si la primera
+    transacción es anterior a la ventana base, baja desde esa fecha (`periodo_base`).
   - El snapshot diario lo guarda el ETL (uno por fecha; el botón del Dashboard queda para uno a mano).
 - **Robustez**: `app.py` envuelve `pg.run()`: una excepción en una página se muestra y el resto
   sigue. Estado del sistema muestra storage, almacén, última corrida del ETL, Yahoo y versiones.
@@ -202,6 +205,19 @@ Todo sobre precios en **USD equivalente**, retornos diarios simples `r = p_t / p
   Δ = después − antes de vol, Sharpe y max DD a 1 y 3 años; ranking por Δ Sharpe 3a.
   Precio de 1 unidad: CEDEAR = ADR × CCL / ratio (ratio del item o Comafi); acción = `.BA`.
   Peso de 1 unidad = precio / valor de la cartera; si supera p, la UI lo alerta.
+- **Evolución real** (`core/portfolio/evolucion.py`, página Evolución real): cantidades de cada día
+  (transacciones efectivas) × precio de cierre en pesos: `.BA` de BCBA, o ADR / ratio × CCL si un
+  CEDEAR no tiene `.BA`, o el precio de la operación si no hay mercado. Días sin cotización: último
+  precio (es para valuar; el riesgo sigue sin forward-fill). USD = pesos / CCL del día. Operación de
+  fin de semana → próximo día hábil.
+  Flujo: compra = cantidad × precio + comisión; venta = −(cantidad × precio − comisión); USD al CCL de
+  su fecha. Sin cuenta de efectivo: vender = sacar plata. Aportes netos = Σ flujos.
+  Rendimiento time-weighted diario en dos tramos (operaciones al cierre): a = V_viejo/V_{t−1} − 1 con
+  V_viejo = cantidades de ayer × precios de hoy; b = (V_t − V_viejo − F_t) / (V_viejo + máx(F_t, 0));
+  r = (1+a)(1+b) − 1. Ganancia del período = valor final − valor inicial − aportes. Período parcial:
+  base = cierre del primer día. Referencias base 100: SPY (× CCL en pesos) y dólar CCL. No anualiza.
+  Alertas: precio de la operación a más de 25 % del cierre de ese día, o salto > 30 % sin operación
+  (split o cambio de ratio no cargado).
 - Historia para decisión: `settings.HISTORY_PERIOD_DECISION` (3y por defecto).
 - **Impacto de la última operación** (`core/decision/ultima_operacion.py`): última = transacción
   efectiva más reciente por (fecha, creado_en). Antes = cartera sin esa operación; después = la de
@@ -227,7 +243,7 @@ Todo sobre precios en **USD equivalente**, retornos diarios simples `r = p_t / p
 Hecho: G/P en USD-CCL (Cartera y Dashboard), métricas de rendimiento, watchlist + página
 Candidatos, robustez (versiones fijas, timeouts, cortacircuito, Estado del sistema, smoke test),
 almacén de precios + ETL diario + snapshots automáticos + uptime, UX (impacto de la última
-operación, formato AR, navegación por secciones). El diseño de lo que sigue en la capa de decisión
+operación, formato AR, navegación por secciones), evolución real de la cartera. El diseño de lo que sigue en la capa de decisión
 (rebalanceo, alertas, fundamentals, export para LLM, reglas con candidatos) está en
 **`docs/ROADMAP.md`**.
 

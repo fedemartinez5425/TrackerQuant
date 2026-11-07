@@ -60,8 +60,15 @@ def repo(tmp_path):
 def test_universo(repo):
     u = etl.universo(repo)
     # ADR del CEDEAR, .BA de la acción sin instrumento cargado, watchlist, benchmark y pares del CCL
-    for t in ["AAPL", "GGAL.BA", "MSFT", settings.DEFAULT_BENCHMARK, "YPFD.BA", "PAM"]:
+    for t in ["AAPL", "AAPL.BA", "GGAL.BA", "MSFT", settings.DEFAULT_BENCHMARK, "YPFD.BA", "PAM"]:
         assert t in u
+
+
+def test_periodo_base_cubre_la_primera_transaccion(repo):
+    assert etl.periodo_base(repo) == settings.HISTORY_PERIOD_BASE
+    repo.add_transactions([Transaction(fecha=date.today() - timedelta(days=4 * 365), ticker="GGAL",
+                                       accion=TransactionAction.COMPRA, cantidad=1, precio=100)])
+    assert etl.periodo_base(repo) == "5y"
 
 
 def test_corrida_completa_guarda_precios_snapshot_y_auditoria(repo, monkeypatch):

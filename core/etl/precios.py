@@ -67,6 +67,8 @@ def universo(repo: BaseRepository) -> list[str]:
     riesgo = [InstrumentoRiesgo(i.ticker, i.tipo_instrumento, i.ticker_usd) for i in instrumentos.values()]
     riesgo += [InstrumentoRiesgo(w.ticker, w.tipo_instrumento, w.ticker_usd) for w in repo.list_watchlist()]
     tickers = set(tickers_de_mercado(riesgo)) | {settings.DEFAULT_BENCHMARK}
+    # Precio en BCBA de los CEDEARs: lo usan Posiciones (precio de hoy) y la Evolución real (historia).
+    tickers |= {f"{i.ticker}.BA" for i in instrumentos.values() if i.tipo_instrumento == TipoInstrumento.CEDEAR}
     tickers |= {t for ars, usd, _ in settings.CCL_PARES for t in (ars, usd)}
     return sorted(tickers)
 
@@ -75,15 +77,31 @@ def _pares_ccl() -> list[str]:
     return [t for ars, usd, _ in settings.CCL_PARES for t in (ars, usd)]
 
 
-def extraer(tickers: list[str]) -> pd.DataFrame:
+def periodo_base(repo: BaseRepository, hoy: date | None = None) -> str:
+    """La ventana base (3y), o más si la primera transacción es más vieja:
+    la Evolución real necesita precios desde la primera operación."""
+    from core.portfolio.evolucion import periodo_desde
+
+    fechas = [t.fecha for t in transacciones_efectivas(repo.list_transactions())]
+    if not fechas:
+        return settings.HISTORY_PERIOD_BASE
+    necesario = periodo_desde(min(fechas), hoy)
+    if data_providers.dias_periodo(necesario) > data_providers.dias_periodo(settings.HISTORY_PERIOD_BASE):
+        return necesario
+    return settings.HISTORY_PERIOD_BASE
+
+
+def extraer(tickers: list[str], periodo: str | None = None) -> pd.DataFrame:
     """Matriz fecha × ticker con la ventana completa, en lote."""
+    periodo = periodo or settings.HISTORY_PERIOD_BASE
+    periodo_ccl = periodo if data_providers.dias_periodo(periodo) > data_providers.dias_periodo(PERIODO_CCL) else PERIODO_CCL
     data_providers.limpiar_cache()  # siempre datos nuevos (y sin almacén: se baja todo)
-    data_providers.precargar([t for t in tickers if t not in _pares_ccl()], settings.HISTORY_PERIOD_BASE)
-    data_providers.precargar(_pares_ccl(), PERIODO_CCL)
+    data_providers.precargar([t for t in tickers if t not in _pares_ccl()], periodo)
+    data_providers.precargar(_pares_ccl(), periodo_ccl)
     frames = []
     for t in tickers:
-        periodo = PERIODO_CCL if t in _pares_ccl() else settings.HISTORY_PERIOD_BASE
-        h = data_providers.get_history(t, period=periodo)  # del cache; si faltó en el lote, reintenta solo
+        periodo_t = periodo_ccl if t in _pares_ccl() else periodo
+        h = data_providers.get_history(t, period=periodo_t)  # del cache; si faltó en el lote, reintenta solo
         if h is not None and not h.empty and t in h.columns:
             frames.append(h[t])
     return pd.concat(frames, axis=1, sort=True) if frames else pd.DataFrame()
@@ -134,7 +152,7 @@ def correr(repo: BaseRepository, con_snapshot: bool = True, escribir: bool = Tru
     hoy = hoy or date.today()
     ahora = datetime.now(timezone.utc)
     tickers = universo(repo)
-    matriz = extraer(tickers)
+    matriz = extraer(tickers, periodo_base(repo, hoy))
     resultado = ResultadoETL(tickers_esperados=tickers, tickers_bajados=sorted(matriz.columns))
     resultado.problemas = controlar_precios(matriz, tickers, settings.CCL_PARES)
 

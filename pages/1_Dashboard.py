@@ -213,6 +213,7 @@ with col_izq:
         st.markdown(f"##### {titulo}")
         st.caption("Con los pesos de HOY aplicados a toda la historia (no es tu rendimiento real).")
         st.plotly_chart(charts.area_evolucion(indice), width="stretch")
+        st.page_link("pages/13_Evolucion.py", label="Ver tu evolución real (con tus compras y ventas)", icon="📆")
     else:
         st.info("Sin datos suficientes para graficar la evolución.")
 
