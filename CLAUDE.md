@@ -120,7 +120,8 @@ Las páginas no deben tener lógica de negocio: llaman a `core/`. `core/` no imp
 - **Calendarios**: nunca forward-fill de precios entre mercados. `alinear_dias_comunes()` deja solo
   días con precio de todos; excluye activos con historia corta (quedan en `df.attrs["excluidos"]`,
   la UI lo avisa con `avisar_excluidos`). `retorno_diario_cartera` re-normaliza pesos de faltantes.
-- **CCL** = mediana de los pares de `settings.CCL_PARES` (GGAL 10:1, YPFD 1:1, PAMP 25:1).
+- **CCL** = mediana de los pares de `settings.CCL_PARES` (GGAL 10:1, BMA 10:1, PAMP 25:1). YPFD.BA/YPF
+  se sacó: en Yahoo daba un CCL 10 veces menor que el resto (dato de Yahoo, no del ratio).
 - **Forecast GARCH(1,1) con dist t.** Se guarda `vol_horizonte` (raíz del promedio de varianzas del
   horizonte), no la del día N. El cono acumula varianzas diarias.
 - **Datos de mercado (data engineering)**: la app NO baja la historia de Yahoo en cada visita.
@@ -253,18 +254,14 @@ operación, formato AR, navegación por secciones), evolución real de la carter
 2. **Ratios de Comafi persistidos en Sheets** (pestaña nueva) en vez de `data/cedear_ratios.csv`,
    que en Cloud se pierde en cada reinicio.
 3. **Mapeo ticker BCBA → ADR / yfinance** cuando difieren (ej. BRKB → BRK-B).
-4. **Revisar el ratio de YPFD en `CCL_PARES`**: el control de calidad del ETL marca que el par
-   YPFD.BA/YPF da un CCL ~10 veces menor que los otros dos (la mediana lo absorbe, pero hay que
-   confirmar el ratio contra BYMA).
-5. **Benchmark Merval en USD-CCL** y beta con retornos semanales para acciones argentinas.
-6. **Capa de decisión**: ítems 1–5 de `docs/ROADMAP.md` (el 2, alertas, quedó parcial).
-7. Menores: la página Riesgo duplica cálculos de `core/risk/summary.py`; el CCL histórico se pide
+4. **Benchmark Merval en USD-CCL** y beta con retornos semanales para acciones argentinas.
+5. **Capa de decisión**: ítems 1–5 de `docs/ROADMAP.md` (el 2, alertas, quedó parcial).
+6. Menores: la página Riesgo duplica cálculos de `core/risk/summary.py`; el CCL histórico se pide
    a 5y en cada visita (`tipo_cambio_ccl_historico`), hoy lo cubre el almacén.
 
 ## Pendientes manuales de Fede
 
-- Cargar los secrets de GitHub Actions (`GCP_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEETS_SPREADSHEET_ID`,
-  `APP_URL`) y correr a mano *ETL diario* y *Uptime* (ver `docs/GITHUB_ACTIONS.md`).
-- Después del deploy de `feature/ux` (incluye robustez y datos): Reboot en Streamlit Cloud,
-  verificar la pestaña `precios` con sus 5 headers y, tras el primer ETL, Estado del sistema en verde.
+- Secrets de GitHub Actions cargados y primer ETL corrido (7/11/2026: 14/14 tickers en Sheets). Tras
+  el merge de `feature/evolucion`: Reboot en Streamlit Cloud y volver a correr *ETL diario* (suma BMA y
+  los `.BA` de los CEDEARs).
 - Borrar la carpeta `.kilo/worktrees/` (copia vieja del proyecto, no está en git).

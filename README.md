@@ -147,7 +147,7 @@ app detecta los archivos nuevos, los tipifica mirando las columnas del CSV
 CCL = (precio_CEDEAR_ARS × ratio) / precio_ADR_USD
 ```
 
-Pares: `GGAL.BA/GGAL` (10:1), `YPFD.BA/YPF` (1:1), `PAMP.BA/PAM` (25:1).
+Pares: `GGAL.BA/GGAL` (10:1), `BMA.BA/BMA` (10:1), `PAMP.BA/PAM` (25:1).
 Se usa la **mediana** de los pares con datos (un precio desactualizado o un
 ratio mal cargado en un par no distorsiona el resultado; si difieren más de
 5% se avisa en el log). También se calcula una **serie histórica de CCL**

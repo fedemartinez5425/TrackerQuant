@@ -60,7 +60,7 @@ def repo(tmp_path):
 def test_universo(repo):
     u = etl.universo(repo)
     # ADR del CEDEAR, .BA de la acción sin instrumento cargado, watchlist, benchmark y pares del CCL
-    for t in ["AAPL", "AAPL.BA", "GGAL.BA", "MSFT", settings.DEFAULT_BENCHMARK, "YPFD.BA", "PAM"]:
+    for t in ["AAPL", "AAPL.BA", "GGAL.BA", "MSFT", settings.DEFAULT_BENCHMARK, "BMA.BA", "PAM"]:
         assert t in u
 
 

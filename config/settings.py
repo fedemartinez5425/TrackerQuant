@@ -67,7 +67,7 @@ class Settings:
     # tanto contra BYMA o tu broker, pueden cambiar.
     CCL_PARES: tuple = (
         ("GGAL.BA", "GGAL", 10.0),   # Grupo Galicia
-        ("YPFD.BA", "YPF", 1.0),     # YPF
+        ("BMA.BA", "BMA", 10.0),     # Banco Macro (YPFD.BA en Yahoo daba un CCL 10 veces menor)
         ("PAMP.BA", "PAM", 25.0),    # Pampa Energía
     )
 

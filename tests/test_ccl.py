@@ -20,7 +20,7 @@ def test_ccl_automatico_usa_el_primer_par_disponible():
 
 
 def test_ccl_automatico_cae_al_segundo_par_si_el_primero_falla():
-    precios = {"YPFD.BA": 3000.0, "YPF": 30.0}  # GGAL.BA/GGAL sin datos
+    precios = {"BMA.BA": 3000.0, "BMA": 30.0}  # GGAL.BA/GGAL sin datos
 
     def fake_price(ticker, use_cache=True):
         return precios.get(ticker)
@@ -30,7 +30,7 @@ def test_ccl_automatico_cae_al_segundo_par_si_el_primero_falla():
         resultado = ccl_provider.get_ccl_automatico(use_cache=False)
 
     assert resultado is not None
-    assert "YPFD.BA/YPF" in resultado["fuente"]
+    assert "BMA.BA/BMA" in resultado["fuente"]
 
 
 def test_ccl_automatico_devuelve_none_si_ningun_par_tiene_datos():
