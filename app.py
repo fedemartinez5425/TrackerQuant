@@ -22,7 +22,7 @@ from core.storage import get_backend_status, reset_repository_cache
 setup_logging()
 
 st.set_page_config(
-    page_title="Data Finance · Tracker Quant",
+    page_title="Tracker Quant",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -34,7 +34,7 @@ def _pantalla_login() -> None:
     with st.sidebar:
         app_style.sidebar_header(st)
     st.title("📊 Tracker Quant")
-    st.caption("Data Finance · Risk Analytics — CCL, precios e históricos automatizados vía yfinance. Sistema cerrado.")
+    st.caption("Risk Analytics — CCL, precios e históricos automatizados vía yfinance. Sistema cerrado.")
     render_login()
 
 

@@ -1,5 +1,5 @@
 """
-Identidad visual del Tracker Quant — Data Finance.
+Identidad visual del Tracker Quant (Datenblick · sección Data Finance).
 
 Concepto: panel de riesgo cuantitativo profesional, oscuro, con un único
 acento verde menta. Inspirado en terminales de trading y dashboards de
@@ -73,7 +73,7 @@ p, span, label, li, div {{ color: var(--text-primary); }}
     color: var(--accent) !important;
 }}
 
-/* Lockup de marca "DATA FINANCE" en el sidebar */
+/* Lockup de marca "TRACKERQUANT" en el sidebar */
 .df-lockup-row {{ display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }}
 .df-lockup-dot {{
     width: 9px; height: 9px; border-radius: 50%;
@@ -235,14 +235,14 @@ def inject(st) -> None:
 
 
 def sidebar_header(st) -> None:
-    """Lockup 'DATA FINANCE' + firma de Fede Martinez en el sidebar."""
+    """Lockup 'TRACKERQUANT' (logo) en el sidebar."""
     st.markdown(
         """
         <div class="df-lockup-row">
             <div class="df-lockup-dot"></div>
-            <div class="df-lockup">DATA<span>FINANCE</span></div>
+            <div class="df-lockup">TRACKER<span>QUANT</span></div>
         </div>
-        <div class="df-sublockup">Tracker Quant · Risk Analytics</div>
+        <div class="df-sublockup">Risk Analytics</div>
         """,
         unsafe_allow_html=True,
     )
@@ -252,7 +252,7 @@ def sidebar_footer(st) -> None:
     st.markdown(
         """
         <div class="df-footer-signature">
-        Hecho por <b>Fede Martínez</b><br>Data Finance · YouTube
+        Hecho por <b>Datenblick</b><br>Sección Data Finance · YouTube
         </div>
         """,
         unsafe_allow_html=True,
